@@ -21,6 +21,9 @@ extern crate wee_alloc;
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
+#[no_mangle]
+pub static mut BUFFER: [u8; 64 * 1024] = [0; 64 * 1024];
+
 #[repr(transparent)]
 pub struct FatPtr(u64);
 
@@ -94,6 +97,20 @@ pub unsafe extern "C" fn fibonacci(n: u32) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn endless_loop() {
     loop {}
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn to_lower_case() {
+    let mut i = 0;
+
+    // Loop through BUFFER until we hit the null terminator
+    while i < BUFFER.len() && BUFFER[i] != 0 {
+        // If the character is an uppercase letter (A-Z), convert to lowercase
+        if BUFFER[i] >= b'A' && BUFFER[i] <= b'Z' {
+            BUFFER[i] = BUFFER[i] + (b'a' - b'A');
+        }
+        i += 1;
+    }
 }
 
 #[cfg(target_family = "wasm")]

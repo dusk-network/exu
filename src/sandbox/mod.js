@@ -18,6 +18,7 @@ const workerUrl = URL.createObjectURL(
  */
 export class Sandbox {
   #worker;
+  #globals;
   #memory;
   #memoryPort;
   #signal;
@@ -36,8 +37,13 @@ export class Sandbox {
     const mc = new MessageChannel();
     this.#memoryPort = mc.port1;
 
+    const initialized = this.send(this.#worker, { module, importsUrl }, [
+      mc.port2,
+    ]);
+
     this.#signal = signal;
-    this.#memory = this.send(this.#worker, { module, importsUrl }, [mc.port2]);
+    this.#memory = initialized.then(({ memory }) => memory);
+    this.#globals = initialized.then(({ globals }) => globals);
   }
 
   /**
@@ -52,6 +58,10 @@ export class Sandbox {
         (...args) =>
           this.send(this.#worker, { member: prop, args }),
     });
+  }
+
+  get globals() {
+    return this.#globals;
   }
 
   /**

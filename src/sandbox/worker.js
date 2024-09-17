@@ -14,11 +14,26 @@ export default function () {
     memoryPort: null,
   };
 
+  const getGlobals = (module) =>
+    WebAssembly.Module.exports(module)
+      .filter(({ kind, name }) => kind === "global" && !name.startsWith("__"))
+      .reduce(
+        (acc, item) => (
+          (acc[item.name] = Internals.instance.exports[item.name].value), acc
+        ),
+        {},
+      );
+
   async function init({ module, importsUrl }, [port]) {
     if (typeof importsUrl === "string") {
-      Internals.imports = (await import(importsUrl)).default;
+      const importsModule = await import(importsUrl);
+      Internals.imports = importsModule.default;
 
       Internals.instance = new WebAssembly.Instance(module, Internals.imports);
+
+      if (typeof importsModule.oninit === "function") {
+        await importsModule.oninit(Internals.instance);
+      }
     } else {
       Internals.instance = new WebAssembly.Instance(module);
     }
@@ -43,7 +58,7 @@ export default function () {
       const { source, count } = get;
       const length = count ?? source.byteLength ?? source.length;
       Internals.memoryPort.postMessage(
-        new Uint8Array(memory.buffer, source, length),
+        new Uint8Array(memory.buffer.slice(source, source + length)),
       );
     } else {
       throw new TypeError("Invalid memory request");
@@ -69,12 +84,17 @@ export default function () {
     removeListener(main);
     addListener(handleRequest);
 
+    const initialized = {
+      memory: null,
+      globals: getGlobals(data.module),
+    };
+
     // `crossOriginIsolated` might be `undefined`; in that case, the behavior is
     // the same as having the value `true`.
-    if (self.crossOriginIsolated === false) {
-      postMessage(null);
-    } else {
-      postMessage(Internals.imports?.env?.memory ?? null);
+    if (self.crossOriginIsolated !== false) {
+      initialized.memory = Internals.imports?.env?.memory ?? null;
     }
+
+    postMessage(initialized);
   });
 }
