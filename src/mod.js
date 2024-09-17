@@ -9,6 +9,7 @@
  *
  * @property {WebAssembly.Memory} memory - The WebAssembly memory object
  * @property {function} memcpy - The memory copy function
+ * @property {Object} globals - The WebAssembly's globals
  */
 
 /**
@@ -140,11 +141,15 @@ export class Module {
       const memory = await sandbox.memory;
       const exports = sandbox.exports;
       const memcpy = sandbox.memcpy;
-      const result = fn(exports, { memory: memory ?? MemoryProxy, memcpy });
+      const globals = await sandbox.globals;
 
-      result.finally(sandbox.terminate);
+      const result = fn(exports, {
+        memory: memory ?? MemoryProxy,
+        memcpy,
+        globals,
+      });
 
-      return await result;
+      return Promise.resolve(result).finally(sandbox.terminate);
     };
   }
 
