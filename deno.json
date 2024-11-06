@@ -1,0 +1,12 @@
+{
+  "name": "@dusk/exu",
+  "version": "0.1.2",
+  "exports": "./src/mod.js",
+  "tasks": {
+    "test": "deno test --allow-net --allow-read --allow-write --allow-run --allow-import"
+  },
+  "publish": {
+    "include": ["src"],
+    "exclude": ["src/tests"]
+  }
+}
