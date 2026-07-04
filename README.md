@@ -15,7 +15,7 @@ Exu is a high-performance library designed for both browser and Deno environment
 To include Exu in your project, import the module directly from the provided URL:
 
 ```javascript
-import { Module } from "path/to/exu/src/mod.js";
+import { Module } from "jsr:@dusk/exu";
 ```
 
 ### Basic Usage

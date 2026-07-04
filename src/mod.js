@@ -3,6 +3,14 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 //
 // Copyright (c) DUSK NETWORK. All rights reserved.
+//
+// @ts-self-types="./mod.d.ts"
+
+/**
+ * Run WebAssembly modules as isolated, abortable tasks in worker sandboxes.
+ *
+ * @module
+ */
 
 /**
  * @typedef {Object} MemoryAccessor
@@ -164,9 +172,7 @@ export class Module {
    */
   api = (options = {}) =>
     new Proxy(NullTarget, {
-      get:
-        (_, prop) =>
-        (...args) =>
-          this.task((exports) => exports[prop](...args))(options),
+      get: (_, prop) => (...args) =>
+        this.task((exports) => exports[prop](...args))(options),
     });
 }
