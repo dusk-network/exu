@@ -119,22 +119,16 @@ export class Module {
    *
    * @returns {Promise<Sandbox>} - The sandbox instance
    */
-  #createSandbox(options = {}) {
-    return new Promise(async (resolve, reject) => {
-      const { signal, imports } = options;
+  async #createSandbox(options = {}) {
+    const { signal, imports } = options;
 
-      if (signal?.aborted) {
-        reject(signal.reason);
-        return;
-      }
+    signal?.throwIfAborted();
+    const module = await this.#module;
+    signal?.throwIfAborted();
 
-      const module = await this.#module;
-      const importsUrl = ensureImportsValue(imports) ?? this.#importsUrl;
+    const importsUrl = ensureImportsValue(imports) ?? this.#importsUrl;
 
-      const sandbox = new Sandbox({ module, importsUrl, signal });
-
-      resolve(sandbox);
-    });
+    return new Sandbox({ module, importsUrl, signal });
   }
 
   /**
