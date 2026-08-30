@@ -1,7 +1,4 @@
-import {
-  test,
-  assert,
-} from "http://rawcdn.githack.com/mio-mini/test-harness/0.1.0/mod.js";
+import { assert, test } from "test-harness";
 
 import { Module } from "../src/mod.js";
 
@@ -43,14 +40,14 @@ test("API abortable calls", async () => {
 
 test("task for bulk actions", async () => {
   const module = createModule();
-  let task = module.task(async ({ fibonacci }) => {
-    let fib5 = await fibonacci(5);
-    let fib8 = await fibonacci(8);
+  const task = module.task(async ({ fibonacci }) => {
+    const fib5 = await fibonacci(5);
+    const fib8 = await fibonacci(8);
 
     return { fib5, fib8 };
   });
 
-  let results = await task();
+  const results = await task();
   assert.equal(results.fib5, 8);
   assert.equal(results.fib8, 34);
 });
@@ -61,8 +58,8 @@ test("direct shared memory access", async () => {
     { malloc, free, byte, set_byte },
     { memory },
   ) {
-    let ptr = await malloc(1);
-    let buffer = new Uint8Array(memory.buffer, ptr, 1);
+    const ptr = await malloc(1);
+    const buffer = new Uint8Array(memory.buffer, ptr, 1);
 
     assert.equal(buffer[0], 0);
     assert.equal(await byte(ptr), buffer[0]);
@@ -92,7 +89,7 @@ test("memcpy", async () => {
     { malloc, free, byte, set_byte },
     { memcpy },
   ) {
-    let ptr = await malloc(1);
+    const ptr = await malloc(1);
     let data = new Uint8Array(1);
 
     assert.equal(data[0], 0);
@@ -124,6 +121,15 @@ test("memcpy", async () => {
 
     // Now the memory is updated
     assert.equal(data[0], 21);
+
+    const copy = new Uint8Array(1);
+    await memcpy(copy, data);
+    assert.equal(copy[0], 21);
+    await assert.reject(
+      async () => await memcpy(null, data),
+      TypeError,
+      "Invalid arguments.",
+    );
 
     await free(ptr, 1);
   });
