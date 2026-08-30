@@ -30,11 +30,13 @@ test("API wrong method", async () => {
 
 test("API abortable calls", async () => {
   const module = createModule();
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(new Error("stop")), 50);
+
   await assert.reject(
-    async () =>
-      await module.api({ signal: AbortSignal.timeout(500) }).endless_loop(),
+    async () => await module.api({ signal: controller.signal }).endless_loop(),
     Error,
-    "Signal timed out.",
+    "stop",
   );
 });
 
