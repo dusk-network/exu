@@ -5,16 +5,16 @@ import {
 
 import { Module } from "../src/mod.js";
 
-const module = new Module(
-  new URL(
-    "./example/target/wasm32-unknown-unknown/release/example.wasm",
-    import.meta.url,
-  ),
-);
-
-module.defaultImports = new URL("./custom-imports.js", import.meta.url);
+const createModule = () => {
+  const module = new Module(
+    new URL("./assets/example.wasm", import.meta.url),
+  );
+  module.defaultImports = new URL("./custom-imports.js", import.meta.url);
+  return module;
+};
 
 test("API single call", async () => {
+  const module = createModule();
   const fib5 = await module.api().fibonacci(5);
   const fib7 = await module.api().fibonacci(7);
 
@@ -23,6 +23,7 @@ test("API single call", async () => {
 });
 
 test("API wrong method", async () => {
+  const module = createModule();
   await assert.reject(
     async () => await module.api().fabonacci(5),
     TypeError,
@@ -31,6 +32,7 @@ test("API wrong method", async () => {
 });
 
 test("API abortable calls", async () => {
+  const module = createModule();
   await assert.reject(
     async () =>
       await module.api({ signal: AbortSignal.timeout(500) }).endless_loop(),
@@ -40,6 +42,7 @@ test("API abortable calls", async () => {
 });
 
 test("task for bulk actions", async () => {
+  const module = createModule();
   let task = module.task(async ({ fibonacci }) => {
     let fib5 = await fibonacci(5);
     let fib8 = await fibonacci(8);
@@ -53,6 +56,7 @@ test("task for bulk actions", async () => {
 });
 
 test("direct shared memory access", async () => {
+  const module = createModule();
   const task = module.task(async function (
     { malloc, free, byte, set_byte },
     { memory },
@@ -83,6 +87,7 @@ test("direct shared memory access", async () => {
 });
 
 test("memcpy", async () => {
+  const module = createModule();
   const task = module.task(async function (
     { malloc, free, byte, set_byte },
     { memcpy },
