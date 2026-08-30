@@ -7,7 +7,7 @@
 export const NullTarget = Object.create(null);
 
 export const MemoryProxy = new Proxy(NullTarget, {
-  get(...args) {
+  get() {
     throw new ReferenceError(
       "Cannot directly access to WebAssembly Memory unless it's a Shared Memory",
     );

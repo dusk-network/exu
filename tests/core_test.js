@@ -1,20 +1,17 @@
-import {
-  test,
-  assert,
-} from "http://rawcdn.githack.com/mio-mini/test-harness/0.1.0/mod.js";
+import { assert, test } from "test-harness";
 
 import { Module } from "../src/mod.js";
 
-const module = new Module(
-  new URL(
-    "./example/target/wasm32-unknown-unknown/release/example.wasm",
-    import.meta.url,
-  ),
-);
-
-module.defaultImports = new URL("./custom-imports.js", import.meta.url);
+const createModule = () => {
+  const module = new Module(
+    new URL("./assets/example.wasm", import.meta.url),
+  );
+  module.defaultImports = new URL("./custom-imports.js", import.meta.url);
+  return module;
+};
 
 test("API single call", async () => {
+  const module = createModule();
   const fib5 = await module.api().fibonacci(5);
   const fib7 = await module.api().fibonacci(7);
 
@@ -23,6 +20,7 @@ test("API single call", async () => {
 });
 
 test("API wrong method", async () => {
+  const module = createModule();
   await assert.reject(
     async () => await module.api().fabonacci(5),
     TypeError,
@@ -31,34 +29,39 @@ test("API wrong method", async () => {
 });
 
 test("API abortable calls", async () => {
+  const module = createModule();
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(new Error("stop")), 50);
+
   await assert.reject(
-    async () =>
-      await module.api({ signal: AbortSignal.timeout(500) }).endless_loop(),
+    async () => await module.api({ signal: controller.signal }).endless_loop(),
     Error,
-    "Signal timed out.",
+    "stop",
   );
 });
 
 test("task for bulk actions", async () => {
-  let task = module.task(async ({ fibonacci }) => {
-    let fib5 = await fibonacci(5);
-    let fib8 = await fibonacci(8);
+  const module = createModule();
+  const task = module.task(async ({ fibonacci }) => {
+    const fib5 = await fibonacci(5);
+    const fib8 = await fibonacci(8);
 
     return { fib5, fib8 };
   });
 
-  let results = await task();
+  const results = await task();
   assert.equal(results.fib5, 8);
   assert.equal(results.fib8, 34);
 });
 
 test("direct shared memory access", async () => {
+  const module = createModule();
   const task = module.task(async function (
     { malloc, free, byte, set_byte },
     { memory },
   ) {
-    let ptr = await malloc(1);
-    let buffer = new Uint8Array(memory.buffer, ptr, 1);
+    const ptr = await malloc(1);
+    const buffer = new Uint8Array(memory.buffer, ptr, 1);
 
     assert.equal(buffer[0], 0);
     assert.equal(await byte(ptr), buffer[0]);
@@ -83,11 +86,12 @@ test("direct shared memory access", async () => {
 });
 
 test("memcpy", async () => {
+  const module = createModule();
   const task = module.task(async function (
     { malloc, free, byte, set_byte },
     { memcpy },
   ) {
-    let ptr = await malloc(1);
+    const ptr = await malloc(1);
     let data = new Uint8Array(1);
 
     assert.equal(data[0], 0);
@@ -119,6 +123,15 @@ test("memcpy", async () => {
 
     // Now the memory is updated
     assert.equal(data[0], 21);
+
+    const copy = new Uint8Array(1);
+    await memcpy(copy, data);
+    assert.equal(copy[0], 21);
+    await assert.reject(
+      async () => await memcpy(null, data),
+      TypeError,
+      "Invalid arguments.",
+    );
 
     await free(ptr, 1);
   });

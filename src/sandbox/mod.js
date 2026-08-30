@@ -53,10 +53,8 @@ export class Sandbox {
    */
   get exports() {
     return new Proxy(NullTarget, {
-      get:
-        (_, prop) =>
-        (...args) =>
-          this.send(this.#worker, { member: prop, args }),
+      get: (_, prop) => (...args) =>
+        this.send(this.#worker, { member: prop, args }),
     });
   }
 

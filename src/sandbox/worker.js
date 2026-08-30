@@ -43,8 +43,8 @@ export default function () {
   }
 
   function handleMemoryRequest({ data: { get, set } }) {
-    const memory =
-      Internals.imports?.env?.memory ?? Internals.instance?.exports?.memory;
+    const memory = Internals.imports?.env?.memory ??
+      Internals.instance?.exports?.memory;
 
     if (!(memory instanceof WebAssembly.Memory)) {
       throw new ReferenceError("WebAssembly.Memory is not defined");

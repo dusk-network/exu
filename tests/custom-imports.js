@@ -6,8 +6,8 @@
  * @returns {number[]}
  */
 const parseFatPtr = (value) => {
-  let ptr = Number(value >> 32n);
-  let size = Number(value & 0xffff_ffffn);
+  const ptr = Number(value >> 32n);
+  const size = Number(value & 0xffff_ffffn);
 
   return [ptr, size];
 };
@@ -29,7 +29,7 @@ export default {
      * @param fatptr {bigint}
      */
     sig(fatptr) {
-      let [ptr, size] = parseFatPtr(fatptr);
+      const [ptr, size] = parseFatPtr(fatptr);
 
       let messageBuffer = new Uint8Array(memory.buffer, ptr, size);
 
