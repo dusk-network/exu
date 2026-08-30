@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Reject tasks instead of leaving them pending when WebAssembly compilation
+  fails. [#8]
+
 ## [0.1.3] - 2026-07-04
 
 ### Added
@@ -37,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add initial commit
 
 <!-- ISSUES -->
+
+[#8]: https://github.com/dusk-network/exu/issues/8
 
 <!-- VERSIONS -->
 [Unreleased]: https://github.com/dusk-network/exu/compare/v0.1.3...HEAD
