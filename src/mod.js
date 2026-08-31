@@ -140,18 +140,19 @@ export class Module {
   task(fn) {
     return async (options = {}) => {
       const sandbox = await this.#createSandbox(options);
-      const memory = await sandbox.memory;
-      const exports = sandbox.exports;
-      const memcpy = sandbox.memcpy;
-      const globals = await sandbox.globals;
 
-      const result = fn(exports, {
-        memory: memory ?? MemoryProxy,
-        memcpy,
-        globals,
-      });
+      try {
+        const memory = await sandbox.memory;
+        const globals = await sandbox.globals;
 
-      return Promise.resolve(result).finally(sandbox.terminate);
+        return await fn(sandbox.exports, {
+          memory: memory ?? MemoryProxy,
+          memcpy: sandbox.memcpy,
+          globals,
+        });
+      } finally {
+        sandbox.terminate();
+      }
     };
   }
 

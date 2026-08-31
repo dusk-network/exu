@@ -14,6 +14,16 @@ export default function () {
     memoryPort: null,
   };
 
+  const success = (value) => ({ ok: true, value });
+  const failure = (error) => ({
+    ok: false,
+    error: {
+      message: error instanceof Error ? error.message : String(error),
+      name: error instanceof Error ? error.name : "Error",
+      stack: error instanceof Error ? error.stack : undefined,
+    },
+  });
+
   const getGlobals = (module) =>
     WebAssembly.Module.exports(module)
       .filter(({ kind, name }) => kind === "global" && !name.startsWith("__"))
@@ -43,58 +53,68 @@ export default function () {
   }
 
   function handleMemoryRequest({ data: { get, set } }) {
-    const memory = Internals.imports?.env?.memory ??
-      Internals.instance?.exports?.memory;
+    try {
+      const memory = Internals.imports?.env?.memory ??
+        Internals.instance?.exports?.memory;
 
-    if (!(memory instanceof WebAssembly.Memory)) {
-      throw new ReferenceError("WebAssembly.Memory is not defined");
-    } else if (set) {
-      const { dest, source, count } = set;
-      const length = count ?? source.byteLength ?? source.length;
+      if (!(memory instanceof WebAssembly.Memory)) {
+        throw new ReferenceError("WebAssembly.Memory is not defined");
+      } else if (set) {
+        const { dest, source, count } = set;
+        const length = count ?? source.byteLength ?? source.length;
 
-      new Uint8Array(memory.buffer, dest, length).set(source);
-      Internals.memoryPort.postMessage(source, [source.buffer]);
-    } else if (get) {
-      const { source, count } = get;
-      const length = count ?? source.byteLength ?? source.length;
-      Internals.memoryPort.postMessage(
-        new Uint8Array(memory.buffer.slice(source, source + length)),
-      );
-    } else {
-      throw new TypeError("Invalid memory request");
+        new Uint8Array(memory.buffer, dest, length).set(source);
+        Internals.memoryPort.postMessage(success(source), [source.buffer]);
+      } else if (get) {
+        const { source, count } = get;
+        const length = count ?? source.byteLength ?? source.length;
+        Internals.memoryPort.postMessage(
+          success(new Uint8Array(memory.buffer.slice(source, source + length))),
+        );
+      } else {
+        throw new TypeError("Invalid memory request");
+      }
+    } catch (error) {
+      Internals.memoryPort.postMessage(failure(error));
     }
   }
 
   function handleRequest({ data }) {
-    const { member, args } = data;
-    const method = Internals.instance.exports[member];
+    try {
+      const { member, args } = data;
+      const method = Internals.instance.exports[member];
 
-    if (typeof method === "function") {
-      const result = method(...args);
+      if (typeof method !== "function") {
+        throw new TypeError(`${member} is not a function`);
+      }
 
-      postMessage(result);
-    } else {
-      postMessage(new TypeError(`${member} is not a function`));
+      postMessage(success(method(...args)));
+    } catch (error) {
+      postMessage(failure(error));
     }
   }
 
   // Module entry point
   addListener(async function main({ data, ports }) {
-    await init(data, ports);
-    removeListener(main);
-    addListener(handleRequest);
+    try {
+      await init(data, ports);
+      removeListener(main);
+      addListener(handleRequest);
 
-    const initialized = {
-      memory: null,
-      globals: getGlobals(data.module),
-    };
+      const initialized = {
+        memory: null,
+        globals: getGlobals(data.module),
+      };
 
-    // `crossOriginIsolated` might be `undefined`; in that case, the behavior is
-    // the same as having the value `true`.
-    if (self.crossOriginIsolated !== false) {
-      initialized.memory = Internals.imports?.env?.memory ?? null;
+      // `crossOriginIsolated` might be `undefined`; in that case, the behavior is
+      // the same as having the value `true`.
+      if (self.crossOriginIsolated !== false) {
+        initialized.memory = Internals.imports?.env?.memory ?? null;
+      }
+
+      postMessage(success(initialized));
+    } catch (error) {
+      postMessage(failure(error));
     }
-
-    postMessage(initialized);
   });
 }

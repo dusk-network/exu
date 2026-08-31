@@ -5,7 +5,7 @@ Exu is a high-performance library designed for both browser and Deno environment
 ## Key Features
 
 - **Sandbox/Worker Model:** Exu leverages a sandboxed environment for executing tasks, ensuring isolation and security while maintaining high performance.
-- **Shared Memory Access:** Offers two modes of memory access - direct shared memory access for efficient data manipulation and a copy mechanism via the `memcpy` function for transferring ownership between contexts.
+- **Shared Memory Access:** Offers two modes of memory access - direct shared memory access for efficient data manipulation and a `memcpy` function for copying data between contexts.
 - **Task-Based Execution:** Simplifies the execution of bulk actions and complex tasks by encapsulating them in easily manageable units.
 
 ## Getting Started
