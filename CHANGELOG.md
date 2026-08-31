@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-31
+
+### Changed
+
+- Define four supported `memcpy` forms and require an explicit count when
+  reading or copying from a numeric WebAssembly address.
+
 ### Fixed
 
 - Copy bytes directly between WebAssembly memory locations.
@@ -50,7 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#8]: https://github.com/dusk-network/exu/issues/8
 
 <!-- VERSIONS -->
-[Unreleased]: https://github.com/dusk-network/exu/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/dusk-network/exu/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dusk-network/exu/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/dusk-network/exu/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/dusk-network/exu/releases/tag/v0.1.2
 [0.1.1]: https://github.com/dusk-network/exu/releases/tag/v0.1.1
