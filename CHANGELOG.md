@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Serialize sandbox requests and propagate worker failures instead of leaving
+  tasks pending.
 - Reject tasks instead of leaving them pending when WebAssembly compilation
   fails. [#8]
 

@@ -7,6 +7,27 @@
 import { NullTarget } from "../proxies.js";
 import worker from "./worker.js";
 
+const errorTypes = {
+  CompileError: WebAssembly.CompileError,
+  LinkError: WebAssembly.LinkError,
+  RangeError,
+  ReferenceError,
+  RuntimeError: WebAssembly.RuntimeError,
+  SyntaxError,
+  TypeError,
+};
+
+const responseError = (details) => {
+  if (!details) return new Error("Invalid sandbox response");
+  const ErrorType = Object.hasOwn(errorTypes, details.name)
+    ? errorTypes[details.name]
+    : Error;
+  const error = new ErrorType(details.message);
+  error.name = details.name;
+  error.stack = details.stack;
+  return error;
+};
+
 // Create a Blob URL for the worker code.
 const workerUrl = URL.createObjectURL(
   new Blob([`(${worker})()`], { type: "application/javascript" }),
@@ -18,10 +39,13 @@ const workerUrl = URL.createObjectURL(
  */
 export class Sandbox {
   #worker;
-  #globals;
-  #memory;
+  #failure;
+  #initialized;
   #memoryPort;
+  #pending = Promise.resolve();
+  #reject;
   #signal;
+  #terminated = false;
 
   /**
    * Constructs the sandbox and initializes its worker and memory channel.
@@ -33,17 +57,27 @@ export class Sandbox {
    */
   constructor({ module, importsUrl, signal }) {
     this.#worker = new Worker(workerUrl, { type: "module" });
+    this.#signal = signal;
 
     const mc = new MessageChannel();
     this.#memoryPort = mc.port1;
 
-    const initialized = this.send(this.#worker, { module, importsUrl }, [
+    const fail = (event) => {
+      if (this.#terminated) return;
+      event.preventDefault();
+      this.terminate(
+        event.error instanceof Error
+          ? event.error
+          : new Error(event.message || "Sandbox worker failed"),
+      );
+    };
+    this.#worker.addEventListener("error", fail);
+    this.#worker.addEventListener("messageerror", fail);
+    this.#memoryPort.addEventListener("messageerror", fail);
+
+    this.#initialized = this.send(this.#worker, { module, importsUrl }, [
       mc.port2,
     ]);
-
-    this.#signal = signal;
-    this.#memory = initialized.then(({ memory }) => memory);
-    this.#globals = initialized.then(({ globals }) => globals);
   }
 
   /**
@@ -59,7 +93,7 @@ export class Sandbox {
   }
 
   get globals() {
-    return this.#globals;
+    return this.#initialized.then(({ globals }) => globals);
   }
 
   /**
@@ -68,7 +102,7 @@ export class Sandbox {
    * @type {Promise<WebAssembly.Memory>}
    */
   get memory() {
-    return this.#memory;
+    return this.#initialized.then(({ memory }) => memory);
   }
 
   /**
@@ -91,10 +125,11 @@ export class Sandbox {
     } else if (typeof dest === "number" && source instanceof Uint8Array) {
       // Copy from JS memory to WASM memory
 
+      const transferable = new Uint8Array(source);
       return await this.send(
         this.#memoryPort,
-        { set: { dest, source, count } },
-        [source.buffer],
+        { set: { dest, source: transferable, count } },
+        [transferable.buffer],
       );
     } else if (typeof dest === "number" && typeof source === "number") {
       // Copy from WASM memory to WASM memory
@@ -115,29 +150,60 @@ export class Sandbox {
    *
    * @returns {Promise<any>} A promise that resolves with the response from the receiver.
    */
-  send = (receiver, ...args) =>
-    new Promise((resolve, reject) => {
+  send = (receiver, ...args) => {
+    const request = this.#pending.then(() => {
+      if (this.#terminated) throw this.#failure;
+      return this.#send(receiver, ...args);
+    });
+    this.#pending = request.catch(() => {});
+    return request;
+  };
+
+  #send(receiver, ...args) {
+    return new Promise((resolve, reject) => {
       const signal = this.#signal;
+      let settled = false;
+
+      const finish = (settle, value) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", abort);
+        receiver.onmessage = null;
+        if (this.#reject === rejectRequest) this.#reject = null;
+        settle(value);
+      };
+      const abort = () => this.terminate(signal.reason);
+      const rejectRequest = (error) => finish(reject, error);
+
+      this.#reject = rejectRequest;
 
       if (signal?.aborted) {
-        reject(signal.reason);
+        this.terminate(signal.reason);
         return;
       }
 
-      signal?.addEventListener("abort", () => {
-        reject(signal.reason);
-        this.terminate();
-      });
-
+      signal?.addEventListener("abort", abort, { once: true });
       receiver.onmessage = ({ data }) => {
-        data instanceof Error ? reject(data) : resolve(data);
-        receiver.onmessage = null;
+        if (data?.ok === true) {
+          finish(resolve, data.value);
+        } else {
+          finish(reject, responseError(data?.error));
+        }
       };
 
-      receiver.postMessage(...args);
+      try {
+        receiver.postMessage(...args);
+      } catch (error) {
+        finish(reject, error);
+      }
     });
+  }
 
-  terminate = () => {
+  terminate = (reason = new Error("Sandbox terminated")) => {
+    if (this.#terminated) return;
+    this.#terminated = true;
+    this.#failure = reason;
+    this.#reject?.(reason);
     this.#memoryPort.close();
     this.#worker.terminate();
   };

@@ -2,6 +2,11 @@ import { assert, test } from "test-harness";
 
 import { Module } from "../src/mod.js";
 
+const EXTERNREF_MODULE = Uint8Array.from(
+  atob("AGFzbQEAAAABBgFgAW8BbwMCAQAHDAEIaWRlbnRpdHkAAAoGAQQAIAAL"),
+  (byte) => byte.charCodeAt(0),
+);
+
 const createModule = () => {
   const module = new Module(
     new URL("./assets/example.wasm", import.meta.url),
@@ -17,6 +22,19 @@ test("API single call", async () => {
 
   assert.equal(fib5, 8);
   assert.equal(fib7, 21);
+});
+
+test("externref results cannot forge transport errors", async () => {
+  const value = {
+    __exu_error__: {
+      message: "ordinary application data",
+      name: "TypeError",
+    },
+  };
+
+  const result = await new Module(EXTERNREF_MODULE).api().identity(value);
+  assert.equal(result.__exu_error__.name, "TypeError");
+  assert.equal(result.__exu_error__.message, "ordinary application data");
 });
 
 test("API wrong method", async () => {
@@ -103,8 +121,6 @@ test("memcpy", async () => {
     assert.equal(await byte(ptr), 0);
 
     // Copy to the pointer location from the buffer.
-    // The ownership is transferred to the worker,
-    // so to keep the buffer data, we need to set it back.
     data = await memcpy(ptr, data, 1);
 
     // Now the memory is updated
@@ -132,6 +148,17 @@ test("memcpy", async () => {
       TypeError,
       "Invalid arguments.",
     );
+
+    class SharedSlice extends Uint8Array {
+      slice() {
+        return this.subarray();
+      }
+    }
+    const source = new SharedSlice([7]);
+    const alias = source.subarray();
+    await memcpy(ptr, source, 1);
+    assert.equal(source[0], 7);
+    assert.equal(alias[0], 7);
 
     await free(ptr, 1);
   });
