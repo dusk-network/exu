@@ -61,15 +61,21 @@ export default function () {
         throw new ReferenceError("WebAssembly.Memory is not defined");
       } else if (set) {
         const { dest, source, count } = set;
-        const length = count ?? source.byteLength ?? source.length;
+        const length = count ?? source.byteLength;
+        const bytes = typeof source === "number"
+          ? new Uint8Array(memory.buffer, source, length)
+          : source.subarray(0, length);
 
-        new Uint8Array(memory.buffer, dest, length).set(source);
-        Internals.memoryPort.postMessage(success(source), [source.buffer]);
+        new Uint8Array(memory.buffer, dest, length).set(bytes);
+        if (source instanceof Uint8Array) {
+          Internals.memoryPort.postMessage(success(source), [source.buffer]);
+        } else {
+          Internals.memoryPort.postMessage(success(undefined));
+        }
       } else if (get) {
         const { source, count } = get;
-        const length = count ?? source.byteLength ?? source.length;
         Internals.memoryPort.postMessage(
-          success(new Uint8Array(memory.buffer.slice(source, source + length))),
+          success(new Uint8Array(new Uint8Array(memory.buffer, source, count))),
         );
       } else {
         throw new TypeError("Invalid memory request");
