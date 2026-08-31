@@ -11,11 +11,14 @@ export interface MemoryAccessor {
   /** The WebAssembly memory exported by the running module. */
   memory: WebAssembly.Memory;
   /** Copies bytes between JavaScript and WebAssembly memory. */
+  memcpy(dest: null, source: number, count: number): Promise<Uint8Array>;
   memcpy(
-    dest: number | Uint8Array | null,
-    source: number | Uint8Array,
+    dest: number,
+    source: Uint8Array,
     count?: number,
-  ): Promise<void | Uint8Array>;
+  ): Promise<Uint8Array>;
+  memcpy(dest: number, source: number, count: number): Promise<void>;
+  memcpy(dest: Uint8Array, source: Uint8Array): Promise<void>;
   /** The WebAssembly globals exported by the running module. */
   globals: WebAssembly.Exports;
 }

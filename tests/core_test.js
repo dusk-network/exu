@@ -112,12 +112,34 @@ test("memcpy", async () => {
     const ptr = await malloc(1);
     let data = new Uint8Array(1);
 
+    for (const address of [NaN, 0.5, -0.5]) {
+      await assert.reject(
+        async () => await memcpy(null, address, 1),
+        TypeError,
+        "source must be a non-negative integer address",
+      );
+      await assert.reject(
+        async () => await memcpy(address, data, 1),
+        TypeError,
+        "dest must be a non-negative integer address",
+      );
+    }
+
     assert.equal(data[0], 0);
     assert.equal(await byte(ptr), data[0]);
 
     data[0] = 11;
 
     // Memory is not shared, so the value is still 0
+    assert.equal(await byte(ptr), 0);
+
+    for (const count of [NaN, 0.5, 2]) {
+      await assert.reject(
+        async () => await memcpy(ptr, data, count),
+        TypeError,
+        "count must be a non-negative integer no greater than source length",
+      );
+    }
     assert.equal(await byte(ptr), 0);
 
     // Copy to the pointer location from the buffer.
@@ -139,10 +161,28 @@ test("memcpy", async () => {
 
     // Now the memory is updated
     assert.equal(data[0], 21);
+    await assert.reject(
+      async () => await memcpy(null, ptr),
+      TypeError,
+      "count must be a non-negative integer",
+    );
+    await assert.reject(
+      async () => await memcpy(null, ptr, 0xffff_ffff),
+      RangeError,
+    );
 
     const copy = new Uint8Array(1);
     await memcpy(copy, data);
     assert.equal(copy[0], 21);
+
+    const copyPtr = await malloc(1);
+    await memcpy(copyPtr, ptr, 1);
+    assert.equal(await byte(copyPtr), 21);
+    await assert.reject(
+      async () => await memcpy(copyPtr, ptr),
+      TypeError,
+      "count must be a non-negative integer",
+    );
     await assert.reject(
       async () => await memcpy(null, data),
       TypeError,
@@ -160,6 +200,7 @@ test("memcpy", async () => {
     assert.equal(source[0], 7);
     assert.equal(alias[0], 7);
 
+    await free(copyPtr, 1);
     await free(ptr, 1);
   });
 

@@ -7,6 +7,8 @@
 import { NullTarget } from "../proxies.js";
 import worker from "./worker.js";
 
+const isAddress = (value) => Number.isSafeInteger(value) && value >= 0;
+
 const errorTypes = {
   CompileError: WebAssembly.CompileError,
   LinkError: WebAssembly.LinkError,
@@ -106,17 +108,45 @@ export class Sandbox {
   }
 
   /**
-   * Copies memory between the WebAssembly and JavaScript contexts.
+   * Copies memory between the WebAssembly and JavaScript contexts. Supported
+   * pairs are `null, number`, `number, Uint8Array`, `number, number`, and
+   * `Uint8Array, Uint8Array`.
    *
    * @param {number|Uint8Array|null} dest - The destination memory address or buffer.
    * @param {number|Uint8Array} source - The source memory address or buffer.
-   * @param {number} [count] - The number of bytes to copy.
+   * @param {number} [count] - The number of bytes to copy. Required for numeric sources and bounded by Uint8Array sources.
    *
    * @returns {Promise<void|Uint8Array>} A promise that resolves once the operation is complete.
    *
    * @throws {TypeError} Throws if the arguments are invalid.
    */
   memcpy = async (dest, source, count) => {
+    if (typeof source === "number" && !isAddress(source)) {
+      throw new TypeError("source must be a non-negative integer address");
+    }
+    if (typeof dest === "number" && !isAddress(dest)) {
+      throw new TypeError("dest must be a non-negative integer address");
+    }
+
+    if (
+      typeof source === "number" &&
+      (dest === null || typeof dest === "number") &&
+      (!Number.isSafeInteger(count) || count < 0)
+    ) {
+      throw new TypeError("count must be a non-negative integer");
+    }
+
+    if (
+      typeof dest === "number" &&
+      source instanceof Uint8Array &&
+      count !== undefined &&
+      (!Number.isSafeInteger(count) || count < 0 || count > source.byteLength)
+    ) {
+      throw new TypeError(
+        "count must be a non-negative integer no greater than source length",
+      );
+    }
+
     if (dest === null && typeof source === "number") {
       // Copy from WASM memory to JS memory
       return await this.send(this.#memoryPort, {
