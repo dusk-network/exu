@@ -97,6 +97,8 @@ export class Module {
     } else {
       throw ReferenceError("`source` should be either a URL or a buffer");
     }
+    // Tasks surface compile failures; until one runs, they are not unhandled.
+    this.#module.catch(() => {});
   }
 
   /**

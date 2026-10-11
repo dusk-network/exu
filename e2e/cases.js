@@ -198,7 +198,6 @@ function baseCases(ctx) {
     {
       name:
         "a module used after its construction tick causes no unhandled rejection",
-      known: "#14",
       async run() {
         const before = ctx.unhandled.length;
         const module = new Module(INVALID);
