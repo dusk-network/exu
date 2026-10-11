@@ -164,3 +164,13 @@ Deno.test("an idle worker makes room for a task with other imports", async () =>
   });
   assert.equal(stats.maxAlive, 1);
 });
+
+Deno.test("idleTimeout must be a number", () => {
+  for (const idleTimeout of ["100", 1n, true]) {
+    assert.throws(
+      () => new Module({ source: ADD_MODULE, idleTimeout }),
+      TypeError,
+      String(idleTimeout),
+    );
+  }
+});

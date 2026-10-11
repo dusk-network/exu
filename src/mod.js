@@ -176,7 +176,10 @@ export class Module {
     }
 
     this.#idleTimeout = options?.idleTimeout ?? 10_000;
-    if (!(this.#idleTimeout >= 0 && this.#idleTimeout <= 2 ** 31 - 1)) {
+    if (
+      typeof this.#idleTimeout !== "number" ||
+      !(this.#idleTimeout >= 0 && this.#idleTimeout <= 2 ** 31 - 1)
+    ) {
       throw new TypeError("`idleTimeout` must be between 0 and 2^31 - 1 ms");
     }
   }
