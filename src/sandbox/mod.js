@@ -5,130 +5,46 @@
 // Copyright (c) DUSK NETWORK. All rights reserved.
 
 import { isExportName, NullTarget } from "../proxies.js";
-import { spawnWorker } from "./spawn.js";
+import { PROTOCOL, WorkerChannel } from "./channel.js";
 
-/**
- * Version of the messages between Sandbox and its worker. Keep in step with
- * `PROTOCOL` in ./worker.js.
- */
-export const PROTOCOL = 1;
-
-/** How long a worker may take to start and accept the module, in ms. */
-const START_TIMEOUT = 30_000;
+export { PROTOCOL };
 
 const isAddress = (value) => Number.isSafeInteger(value) && value >= 0;
 
-const errorTypes = {
-  CompileError: WebAssembly.CompileError,
-  LinkError: WebAssembly.LinkError,
-  RangeError,
-  ReferenceError,
-  RuntimeError: WebAssembly.RuntimeError,
-  SyntaxError,
-  TypeError,
-};
-
-const incompatibleWorker = (protocol) =>
-  new Error(
-    `Incompatible Exu sandbox worker: protocol ${
-      protocol ?? "unknown"
-    }, expected ${PROTOCOL}`,
-  );
-
-const responseError = (details) => {
-  if (!details) return new Error("Invalid sandbox response");
-  const ErrorType = Object.hasOwn(errorTypes, details.name)
-    ? errorTypes[details.name]
-    : Error;
-  const error = new ErrorType(details.message);
-  error.name = details.name;
-  error.stack = details.stack;
-  return error;
-};
-
 /**
- * Creates a sandbox environment for executing code in a separate context
- * using Web Workers.
+ * One task's view of a sandbox worker: a fresh WebAssembly instance, its
+ * exports and its memory. The worker itself may be shared with earlier and
+ * later tasks through a pool; once the task ends, its handles reject.
  */
 export class Sandbox {
-  #worker;
+  #channel;
+  #begun;
+  #ended = false;
   #failure;
-  #initialized;
-  #memoryPort;
-  #pending = Promise.resolve();
-  #reject;
-  #signal;
-  #terminated = false;
 
   /**
-   * Constructs the sandbox and initializes its worker and memory channel.
-   *
    * @param {Object} config - Configuration object for the sandbox.
-   * @param {string} config.module - The module URL to load in the worker.
-   * @param {string} config.importsUrl - The URL for the module's imports.
-   * @param {AbortSignal} config.signal - An optional AbortSignal to cancel operations.
+   * @param {WorkerChannel} [config.channel] - A (pooled) worker to use.
+   * @param {WebAssembly.Module} [config.module] - The compiled module, to start
+   *   a worker of its own when no channel is given.
+   * @param {string} [config.importsUrl] - The URL for the module's imports.
+   * @param {AbortSignal} [config.signal] - An optional AbortSignal to cancel operations.
    * @param {URL|string} [config.workerUrl] - The worker module to start (see {@link spawnWorker}).
    * @param {number} [config.startTimeout] - How long the worker may take to
    *   start, in ms.
    */
-  constructor({
-    module,
-    importsUrl,
-    signal,
-    workerUrl,
-    startTimeout = START_TIMEOUT,
-  }) {
-    this.#signal = signal;
-
-    const mc = new MessageChannel();
-    this.#memoryPort = mc.port1;
-
-    const fail = (event) => {
-      if (this.#terminated) return;
-      event.preventDefault();
-      this.terminate(
-        event.error instanceof Error
-          ? event.error
-          : new Error(event.message || "Sandbox worker failed"),
-      );
-    };
-    this.#memoryPort.addEventListener("messageerror", fail);
-
-    // Requests queue behind the worker's start; a failed start ends the
-    // sandbox with that error.
-    this.#pending = spawnWorker(workerUrl).then((worker) => {
-      if (this.#terminated) {
-        worker.terminate();
-        return;
-      }
-      this.#worker = worker;
-      worker.addEventListener("error", fail);
-      worker.addEventListener("messageerror", fail);
-    }).catch((error) => this.terminate(error));
-
-    this.#initialized = this.send(
-      () => this.#worker,
-      { module, importsUrl, protocol: PROTOCOL },
-      [mc.port2],
-    ).then((initialized) => {
-      if (initialized?.protocol !== PROTOCOL) {
-        throw incompatibleWorker(initialized?.protocol);
-      }
-      return initialized;
-    });
-    // Never transferred when the start fails first: close it here.
-    this.#initialized.catch(() => mc.port2.close());
-
-    // A worker whose download stalls would leave the task pending for good.
-    const timer = setTimeout(
-      () =>
-        this.terminate(
-          new Error(`Sandbox worker did not start within ${startTimeout} ms`),
-        ),
-      startTimeout,
+  constructor(
+    { channel, module, importsUrl, signal, workerUrl, startTimeout },
+  ) {
+    this.#channel = channel ??
+      new WorkerChannel({ module, importsUrl, workerUrl, startTimeout });
+    this.#channel.signal = signal;
+    this.#begun = this.#channel.ready.then(() =>
+      this.#ended ? Promise.reject(this.#failure) : this.#channel.begin()
     );
-    const stop = () => clearTimeout(timer);
-    this.#initialized.then(stop, stop);
+    // Surfaced through the task's requests; a sandbox ended before any must
+    // not raise an unhandled rejection.
+    this.#begun.catch(() => {});
   }
 
   /**
@@ -140,13 +56,14 @@ export class Sandbox {
     return new Proxy(NullTarget, {
       get: (_, prop) =>
         isExportName(prop)
-          ? (...args) => this.send(() => this.#worker, { member: prop, args })
+          ? (...args) =>
+            this.#send("request", { type: "call", member: prop, args })
           : undefined,
     });
   }
 
   get globals() {
-    return this.#initialized.then(({ globals }) => globals);
+    return this.#begun.then(({ globals }) => globals);
   }
 
   /**
@@ -155,7 +72,7 @@ export class Sandbox {
    * @type {Promise<WebAssembly.Memory>}
    */
   get memory() {
-    return this.#initialized.then(({ memory }) => memory);
+    return this.#begun.then(({ memory }) => memory);
   }
 
   /**
@@ -200,21 +117,19 @@ export class Sandbox {
 
     if (dest === null && typeof source === "number") {
       // Copy from WASM memory to JS memory
-      return await this.send(this.#memoryPort, {
-        get: { source, count },
-      });
+      return await this.#send("memory", { get: { source, count } });
     } else if (typeof dest === "number" && source instanceof Uint8Array) {
       // Copy from JS memory to WASM memory
 
       const transferable = new Uint8Array(source);
-      return await this.send(
-        this.#memoryPort,
+      return await this.#send(
+        "memory",
         { set: { dest, source: transferable, count } },
         [transferable.buffer],
       );
     } else if (typeof dest === "number" && typeof source === "number") {
       // Copy from WASM memory to WASM memory
-      await this.send(this.#memoryPort, { set: { source, dest, count } });
+      await this.#send("memory", { set: { source, dest, count } });
     } else if (dest instanceof Uint8Array && source instanceof Uint8Array) {
       // Copy from JS memory to JS memory
       dest.set(source);
@@ -223,76 +138,48 @@ export class Sandbox {
     }
   };
 
-  /**
-   * Sends a message to the specified receiver (worker or message port).
-   *
-   * @param {Worker|MessagePort|() => Worker} receiver - The message receiver,
-   *   or a getter for the worker once it started.
-   * @param {...*} args - See `postMessage` arguments.
-   *
-   * @returns {Promise<any>} A promise that resolves with the response from the receiver.
-   */
-  send = (receiver, ...args) => {
-    const request = this.#pending.then(() => {
-      if (this.#terminated) throw this.#failure;
-      return this.#send(
-        typeof receiver === "function" ? receiver() : receiver,
-        ...args,
-      );
-    });
-    this.#pending = request.catch(() => {});
-    return request;
-  };
-
-  #send(receiver, ...args) {
-    return new Promise((resolve, reject) => {
-      const signal = this.#signal;
-      let settled = false;
-
-      const finish = (settle, value) => {
-        if (settled) return;
-        settled = true;
-        signal?.removeEventListener("abort", abort);
-        receiver.onmessage = null;
-        if (this.#reject === rejectRequest) this.#reject = null;
-        settle(value);
-      };
-      const abort = () => this.terminate(signal.reason);
-      const rejectRequest = (error) => finish(reject, error);
-
-      this.#reject = rejectRequest;
-
-      if (signal?.aborted) {
-        this.terminate(signal.reason);
-        return;
-      }
-
-      signal?.addEventListener("abort", abort, { once: true });
-      receiver.onmessage = ({ data }) => {
-        if (data?.ok === true) {
-          finish(resolve, data.value);
-        } else if (data?.ok === false) {
-          finish(reject, responseError(data.error));
-        } else {
-          // Workers from Exu 0.1 reply without an envelope.
-          finish(reject, incompatibleWorker());
-        }
-      };
-
-      try {
-        receiver.postMessage(...args);
-      } catch (error) {
-        finish(reject, error);
-      }
+  #send(kind, message, transfer) {
+    if (this.#ended) return Promise.reject(this.#failure);
+    // Requests follow the task's `begin`, even when sent right away.
+    return this.#begun.then(() => {
+      if (this.#ended) throw this.#failure;
+      return this.#channel[kind](message, transfer);
     });
   }
 
+  /**
+   * Ends the task and its worker: the request in flight and every queued or
+   * later one rejects with `reason`.
+   */
   terminate = (reason = new Error("Sandbox terminated")) => {
-    if (this.#terminated) return;
-    this.#terminated = true;
-    this.#failure = reason;
-    this.#reject?.(reason);
-    this.#memoryPort.close();
-    this.#worker?.terminate();
+    this.#end(reason);
+    this.#channel.kill(reason);
   };
+
+  /**
+   * Ends the task. Its worker is handed back for reuse only when `reuse` is
+   * set, it is still alive and nothing of the task is still running there;
+   * otherwise it is killed.
+   *
+   * @param {boolean} reuse - Whether the worker may serve another task.
+   * @returns {boolean} Whether the worker can be reused.
+   */
+  release(reuse) {
+    if (this.#ended) return false;
+    this.#end(new Error("Sandbox terminated"));
+    const channel = this.#channel;
+    channel.signal = undefined;
+    if (!reuse || channel.dead || !channel.idle) {
+      channel.kill(this.#failure);
+      return false;
+    }
+    channel.end().catch((error) => channel.kill(error));
+    return true;
+  }
+
+  #end(reason) {
+    if (this.#ended) return;
+    this.#ended = true;
+    this.#failure = reason;
+  }
 }

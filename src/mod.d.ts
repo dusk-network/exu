@@ -43,6 +43,13 @@ export interface ModuleOptions {
    * come from the same Exu version.
    */
   workerUrl?: URL | string;
+  /** Most workers running tasks at once; one less than the cores by default. */
+  workers?: number;
+  /**
+   * How long a worker waits for another task before it ends, in ms (10 000 by
+   * default). `0` ends a worker with its task unless a task is already waiting.
+   */
+  idleTimeout?: number;
 }
 
 /**
@@ -78,7 +85,8 @@ export class Module {
   set defaultImports(value: URL | string | undefined);
 
   /**
-   * Creates an asynchronous task that runs in a fresh sandbox on every call.
+   * Creates an asynchronous task that runs in a fresh instance of the module,
+   * in a pooled worker, on every call.
    */
   task<T>(fn: TaskCallback<T>): (options?: SandboxOptions) => Promise<T>;
 
@@ -86,4 +94,10 @@ export class Module {
    * Returns a callable proxy for one-off WebAssembly export calls.
    */
   api(options?: SandboxOptions): ModuleApi;
+
+  /**
+   * Ends the module's idle workers now. Running tasks finish first; later
+   * tasks start new workers.
+   */
+  close(): void;
 }

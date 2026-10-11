@@ -21,7 +21,24 @@ const pick = (object, keys) =>
  */
 export async function runAll(ctx, { log = console.log, only } = {}) {
   const results = [];
-  for (const c of cases(ctx)) {
+  // Close every module a case opened, so idle workers do not outlive it.
+  const opened = new Set();
+  const Module = class extends ctx.Module {
+    constructor(...args) {
+      super(...args);
+      opened.add(this);
+    }
+  };
+  // One task first, so one-time set-up (browsers probe Exu's worker file)
+  // does not show up in the first case's worker counts.
+  try {
+    const warmup = new ctx.Module(await ctx.bytes("probe.wasm"));
+    await warmup.api().add(1, 2);
+    warmup.close?.();
+  } catch {
+    // the cases will report it
+  }
+  for (const c of cases({ ...ctx, Module })) {
     if (only && !only.some((o) => c.name.includes(o))) continue;
     const skip = typeof c.skip === "function" ? c.skip() : c.skip;
     const known = typeof c.known === "function" ? c.known(ctx) : c.known;
@@ -75,6 +92,8 @@ export async function runAll(ctx, { log = console.log, only } = {}) {
       failed = true;
       error = new Error(`unhandled rejection: ${unhandled[0]}`);
     }
+    for (const module of opened) module.close?.();
+    opened.clear();
     // Whatever the case left running would skew the cases after it.
     workers.forEach((worker) => worker.terminate());
     const ms = performance.now() - started;

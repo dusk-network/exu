@@ -48,7 +48,12 @@
  */
 
 import { isExportName, MemoryProxy, NullTarget } from "./proxies.js";
+import { WorkerChannel } from "./sandbox/channel.js";
 import { Sandbox } from "./sandbox/mod.js";
+import { Pool } from "./sandbox/pool.js";
+
+const defaultWorkers = () =>
+  Math.max(1, (globalThis.navigator?.hardwareConcurrency ?? 2) - 1);
 
 /**
  * Settles like `promise`, but rejects with the abort reason as soon as
@@ -125,6 +130,10 @@ export class Module {
   #module;
   #importsUrl;
   #workerUrl;
+  #workers;
+  #idleTimeout;
+  #pool = null;
+  #generation = 0;
 
   /**
    * Creates a Module instance.
@@ -160,6 +169,19 @@ export class Module {
     } else {
       throw new TypeError("`workerUrl` must be a URL or a string");
     }
+
+    this.#workers = options?.workers ?? defaultWorkers();
+    if (!Number.isSafeInteger(this.#workers) || this.#workers < 1) {
+      throw new TypeError("`workers` must be a positive integer");
+    }
+
+    this.#idleTimeout = options?.idleTimeout ?? 10_000;
+    if (
+      typeof this.#idleTimeout !== "number" ||
+      !(this.#idleTimeout >= 0 && this.#idleTimeout <= 2 ** 31 - 1)
+    ) {
+      throw new TypeError("`idleTimeout` must be between 0 and 2^31 - 1 ms");
+    }
   }
 
   /**
@@ -176,31 +198,49 @@ export class Module {
   }
 
   /**
-   * Creates a new {Sandbox} instance for the module.
+   * Gives a task a worker from the pool and a fresh instance in it.
    *
    * @param {SandboxOptions} [options] - The options for the sandbox
    *
-   * @returns {Promise<Sandbox>} - The sandbox instance
+   * @returns {Promise<[Sandbox, () => void]>} - The sandbox and its release
    */
   async #createSandbox(options = {}) {
     const { signal, imports } = options;
+    // Tasks started before a `close()` do not hand their worker back for reuse.
+    const generation = this.#generation;
 
     const module = await untilAborted(this.#module, signal);
     // The abort may land between compilation settling and this line.
     signal?.throwIfAborted();
 
     const importsUrl = ensureImportsValue(imports) ?? this.#importsUrl;
-
-    return new Sandbox({
-      module,
-      importsUrl,
-      signal,
-      workerUrl: this.#workerUrl,
+    const pool = this.#pool ??= new Pool({
+      create: (importsUrl) =>
+        new WorkerChannel({
+          module,
+          importsUrl,
+          workerUrl: this.#workerUrl,
+          idleTimeout: this.#idleTimeout,
+        }),
+      size: this.#workers,
+      reuse: this.#idleTimeout > 0,
     });
+    const channel = await pool.acquire(signal, importsUrl);
+    const sandbox = new Sandbox({ channel, signal });
+
+    const release = () => {
+      // Workers that loaded custom imports are never reused: the imports
+      // module is evaluated once per worker, so a second task would share its
+      // state.
+      const reuse = importsUrl === undefined && generation === this.#generation;
+      pool.release(channel, sandbox.release(reuse));
+    };
+    return [sandbox, release];
   }
 
   /**
-   * Creates a task to run asynchronously in a newly created {Sandbox}.
+   * Creates a task to run asynchronously in a {Sandbox}: a fresh instance of
+   * the module in a pooled worker.
    *
    * @param {TaskCallback} fn - The function to run in the sandbox
    * @returns {Promise<function>} - An asynchronous function can be run with {SandboxOptions}
@@ -208,9 +248,9 @@ export class Module {
   task(fn) {
     return async (options = {}) => {
       const { signal } = options;
-      let sandbox;
+      let sandbox, release;
       try {
-        sandbox = await this.#createSandbox(options);
+        [sandbox, release] = await this.#createSandbox(options);
       } catch (error) {
         // Aborted meanwhile: the abort reason wins over, say, a compile error.
         signal?.throwIfAborted();
@@ -247,9 +287,19 @@ export class Module {
         throw error;
       } finally {
         signal?.removeEventListener("abort", abort);
-        sandbox.terminate();
+        release();
       }
     };
+  }
+
+  /**
+   * Ends the module's idle workers now. Tasks already started (running,
+   * waiting for a worker or still compiling) finish first and end their
+   * workers; later tasks start new workers.
+   */
+  close() {
+    this.#generation++;
+    this.#pool?.close();
   }
 
   /**
