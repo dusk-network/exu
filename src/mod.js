@@ -132,7 +132,7 @@ export class Module {
   #workerUrl;
   #workers;
   #idleTimeout;
-  #pools = new Map();
+  #pool = null;
   #generation = 0;
 
   /**
@@ -195,41 +195,6 @@ export class Module {
   }
 
   /**
-   * The workers running tasks with the given imports. Workers that loaded
-   * custom imports are never reused: the imports module is evaluated once per
-   * worker, so a second task would share its state.
-   *
-   * @param {string} [importsUrl] - The task's imports.
-   * @param {WebAssembly.Module} module - The compiled module.
-   * @returns {[Pool, boolean]} The pool and whether its workers are reusable.
-   */
-  #pool(importsUrl, module) {
-    let pool = this.#pools.get(importsUrl);
-    if (!pool) {
-      pool = new Pool({
-        create: () =>
-          new WorkerChannel({
-            module,
-            importsUrl,
-            workerUrl: this.#workerUrl,
-            idleTimeout: this.#idleTimeout,
-          }),
-        size: this.#workers,
-        reuse: importsUrl === undefined && this.#idleTimeout > 0,
-      });
-      this.#pools.set(importsUrl, pool);
-    }
-    return [pool, importsUrl === undefined];
-  }
-
-  /** Forgets an empty pool, unless a newer one took its place meanwhile. */
-  #dropIfEmpty(importsUrl, pool) {
-    if (pool.empty && this.#pools.get(importsUrl) === pool) {
-      this.#pools.delete(importsUrl);
-    }
-  }
-
-  /**
    * Gives a task a worker from the pool and a fresh instance in it.
    *
    * @param {SandboxOptions} [options] - The options for the sandbox
@@ -246,22 +211,26 @@ export class Module {
     signal?.throwIfAborted();
 
     const importsUrl = ensureImportsValue(imports) ?? this.#importsUrl;
-    const [pool, reusable] = this.#pool(importsUrl, module);
-    let channel;
-    try {
-      channel = await pool.acquire(signal);
-    } catch (error) {
-      // Aborted before it got a worker: do not keep an empty imports pool.
-      if (!reusable) this.#dropIfEmpty(importsUrl, pool);
-      throw error;
-    }
+    const pool = this.#pool ??= new Pool({
+      create: (importsUrl) =>
+        new WorkerChannel({
+          module,
+          importsUrl,
+          workerUrl: this.#workerUrl,
+          idleTimeout: this.#idleTimeout,
+        }),
+      size: this.#workers,
+      reuse: this.#idleTimeout > 0,
+    });
+    const channel = await pool.acquire(signal, importsUrl);
     const sandbox = new Sandbox({ channel, signal });
 
     const release = () => {
-      const reuse = reusable && generation === this.#generation;
+      // Workers that loaded custom imports are never reused: the imports
+      // module is evaluated once per worker, so a second task would share its
+      // state.
+      const reuse = importsUrl === undefined && generation === this.#generation;
       pool.release(channel, sandbox.release(reuse));
-      // Pools for custom imports keep no idle workers: drop them when done.
-      if (!reusable) this.#dropIfEmpty(importsUrl, pool);
     };
     return [sandbox, release];
   }
@@ -327,10 +296,7 @@ export class Module {
    */
   close() {
     this.#generation++;
-    for (const [importsUrl, pool] of this.#pools) {
-      pool.close();
-      this.#dropIfEmpty(importsUrl, pool);
-    }
+    this.#pool?.close();
   }
 
   /**

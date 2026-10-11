@@ -17,10 +17,12 @@ const unrefTimer = (timer) => {
 };
 
 /**
- * A bounded set of sandbox workers for one module and imports. Workers are
- * started on demand up to `size`; a task waits when all are busy. A worker
- * that comes back healthy goes to the next waiting task, or rests idle until
- * its own idle timeout reports it (see WorkerChannel#onexpire).
+ * A bounded set of sandbox workers for one module, whatever imports each
+ * loaded. Workers are started on demand up to `size`; a task waits when all
+ * are busy. A worker that comes back healthy goes to the next waiting task
+ * with the same imports, or rests idle until its own idle timeout reports it
+ * (see WorkerChannel#onexpire). A task with other imports takes the place of
+ * an idle worker, or of the next one to come back.
  *
  * The bound would deadlock a task that waits on another task of the same
  * module while every worker is taken. So while tasks wait, the pool checks
@@ -37,11 +39,13 @@ export class Pool {
   #waiters = [];
   #busy = new Set();
   #retiring = new WeakSet();
+  #imports = new WeakMap();
   #timer = null;
 
   /**
    * @param {Object} config
-   * @param {() => import("./channel.js").WorkerChannel} config.create - Starts a worker.
+   * @param {(importsUrl?: string) => import("./channel.js").WorkerChannel} config.create -
+   *   Starts a worker with the given imports.
    * @param {number} config.size - The most workers alive at once.
    * @param {boolean} config.reuse - Whether idle workers wait for later tasks.
    */
@@ -52,18 +56,16 @@ export class Pool {
   }
 
   /** Starts a worker in a free place; gives the place back if that throws. */
-  #startCounted() {
+  #start(importsUrl) {
     this.#count++;
+    let channel;
     try {
-      return this.#start();
+      channel = this.#create(importsUrl);
     } catch (error) {
       this.#count--;
       throw error;
     }
-  }
-
-  #start() {
-    const channel = this.#create();
+    this.#imports.set(channel, importsUrl);
     channel.onexpire = () => {
       const index = this.#idle.indexOf(channel);
       if (index === -1) return; // busy again
@@ -75,29 +77,41 @@ export class Pool {
   }
 
   /**
-   * Takes an idle worker, starts one, or waits for one to come back.
+   * Takes an idle worker with the task's imports, starts one, or waits for one
+   * to come back.
    *
    * @param {AbortSignal} [signal] - Gives up waiting on abort.
+   * @param {string} [importsUrl] - The imports the task needs.
    * @returns {Promise<import("./channel.js").WorkerChannel>}
    */
-  acquire(signal) {
+  acquire(signal, importsUrl) {
     signal?.throwIfAborted();
 
-    let channel;
-    while ((channel = this.#idle.pop())) {
-      if (!channel.dead) {
+    for (let i = this.#idle.length - 1; i >= 0; i--) {
+      const channel = this.#idle[i];
+      if (channel.dead) {
+        this.#idle.splice(i, 1);
+        this.#count--;
+      } else if (this.#imports.get(channel) === importsUrl) {
+        this.#idle.splice(i, 1);
         channel.ref();
         return Promise.resolve(this.#lend(channel));
       }
+    }
+
+    // Full, but with idle workers of other imports: end the oldest.
+    if (this.#count >= this.#size && this.#idle.length) {
+      this.#idle.shift().kill();
       this.#count--;
     }
 
     if (this.#count < this.#size) {
-      return Promise.resolve(this.#lend(this.#startCounted()));
+      return Promise.resolve(this.#lend(this.#start(importsUrl)));
     }
 
     return new Promise((resolve, reject) => {
       const waiter = {
+        importsUrl,
         resolve,
         reject,
         cancel: () => signal?.removeEventListener("abort", abort),
@@ -105,10 +119,7 @@ export class Pool {
       const abort = () => {
         const index = this.#waiters.indexOf(waiter);
         if (index !== -1) this.#waiters.splice(index, 1);
-        if (this.#waiters.length === 0 && this.#timer !== null) {
-          clearTimeout(this.#timer);
-          this.#timer = null;
-        }
+        this.#unwatch();
         reject(signal.reason);
       };
       signal?.addEventListener("abort", abort, { once: true });
@@ -119,12 +130,20 @@ export class Pool {
 
   /** Takes the next waiting task; stops the stall check once none waits. */
   #nextWaiter() {
-    const waiter = this.#waiters.splice(0, 1)[0];
-    if (this.#waiters.length === 0 && this.#timer !== null) {
-      clearTimeout(this.#timer);
-      this.#timer = null;
-    }
+    const waiter = this.#waiters.shift();
+    this.#unwatch();
     return waiter;
+  }
+
+  /** Gives the next waiting task a new worker with its imports. */
+  #startForNext() {
+    const waiter = this.#nextWaiter();
+    waiter.cancel();
+    try {
+      waiter.resolve(this.#lend(this.#start(waiter.importsUrl)));
+    } catch (error) {
+      waiter.reject(error);
+    }
   }
 
   /** Checks for stalled workers while tasks wait (see the class notes). */
@@ -137,21 +156,20 @@ export class Pool {
     unrefTimer(this.#timer);
   }
 
+  #unwatch() {
+    if (this.#waiters.length === 0 && this.#timer !== null) {
+      clearTimeout(this.#timer);
+      this.#timer = null;
+    }
+  }
+
   #relieve() {
     if (this.#waiters.length === 0) return;
     const now = performance.now();
     const stalled = [...this.#busy].every((channel) =>
       channel.idleSince !== undefined && now - channel.idleSince >= STALL
     );
-    if (stalled) {
-      const waiter = this.#nextWaiter();
-      waiter.cancel();
-      try {
-        waiter.resolve(this.#lend(this.#startCounted()));
-      } catch (error) {
-        waiter.reject(error);
-      }
-    }
+    if (stalled) this.#startForNext();
     this.#watch();
   }
 
@@ -164,18 +182,16 @@ export class Pool {
    */
   release(channel, reusable) {
     this.#busy.delete(channel);
-    if (!reusable || channel.dead || this.#retiring.has(channel)) {
+    const waiter = this.#waiters[0];
+    if (
+      !reusable || channel.dead || this.#retiring.has(channel) ||
+      (waiter && waiter.importsUrl !== this.#imports.get(channel))
+    ) {
       channel.kill();
       this.#count--;
       // Replace it for a waiting task, but only within the bound.
       if (this.#count < this.#size && this.#waiters.length) {
-        const waiter = this.#nextWaiter();
-        waiter.cancel();
-        try {
-          waiter.resolve(this.#lend(this.#startCounted()));
-        } catch (error) {
-          waiter.reject(error);
-        }
+        this.#startForNext();
       }
       return;
     }
@@ -188,9 +204,8 @@ export class Pool {
       return;
     }
 
-    const waiter = this.#nextWaiter();
     if (waiter) {
-      waiter.cancel();
+      this.#nextWaiter().cancel();
       waiter.resolve(this.#lend(channel));
       return;
     }
@@ -215,11 +230,6 @@ export class Pool {
       this.#count--;
     }
     for (const channel of this.#busy) this.#retiring.add(channel);
-  }
-
-  /** Whether the pool has no workers and no waiting tasks. */
-  get empty() {
-    return this.#count === 0 && this.#waiters.length === 0;
   }
 
   #lend(channel) {

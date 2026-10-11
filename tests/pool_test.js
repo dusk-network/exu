@@ -112,3 +112,55 @@ Deno.test("close() also covers tasks waiting for a worker", async () => {
     globalThis.Worker = Worker;
   }
 });
+
+/** Runs `fn` while counting the workers alive at once. */
+async function countingWorkers(fn) {
+  const { Worker } = globalThis;
+  const stats = { alive: 0, maxAlive: 0 };
+  globalThis.Worker = class extends Worker {
+    #ended = false;
+    constructor(...args) {
+      super(...args);
+      stats.maxAlive = Math.max(stats.maxAlive, ++stats.alive);
+    }
+    terminate() {
+      if (!this.#ended) stats.alive--;
+      this.#ended = true;
+      return super.terminate();
+    }
+  };
+  try {
+    await fn();
+  } finally {
+    globalThis.Worker = Worker;
+  }
+  return stats;
+}
+
+const importsUrl = (name) => `data:text/javascript,export default {};//${name}`;
+
+Deno.test("the workers bound covers tasks with different imports", async () => {
+  const module = new Module({ source: ADD_MODULE, workers: 2 });
+  const stats = await countingWorkers(async () => {
+    const results = await Promise.all(
+      [undefined, "a", "b"].flatMap((name) =>
+        [1, 2, 3].map((i) =>
+          module.api({ imports: name && importsUrl(name) }).add(i, 10)
+        )
+      ),
+    );
+    assert.deepEqual(results, [11, 12, 13, 11, 12, 13, 11, 12, 13]);
+    module.close();
+  });
+  assert.ok(stats.maxAlive <= 2, `${stats.maxAlive} workers alive at once`);
+});
+
+Deno.test("an idle worker makes room for a task with other imports", async () => {
+  const module = new Module({ source: ADD_MODULE, workers: 1 });
+  const stats = await countingWorkers(async () => {
+    assert.equal(await module.api().add(1, 2), 3); // leaves an idle worker
+    assert.equal(await module.api({ imports: importsUrl("a") }).add(2, 3), 5);
+    module.close();
+  });
+  assert.equal(stats.maxAlive, 1);
+});

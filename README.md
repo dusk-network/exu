@@ -109,8 +109,9 @@ const task = module.task(async ({ malloc, free }, { memcpy }) => {
 
 ### Worker pool
 
-Tasks run in a pool of workers: at most `workers` at once (by default one less
-than the logical cores), with other tasks waiting their turn. Each task gets a
+Tasks run in a pool of workers: at most `workers` at once per module, whatever
+their imports (by default one less than the logical cores), with other tasks
+waiting their turn. Each task gets a
 fresh instance of the module. A worker that finished its task cleanly serves
 the next one, and ends after `idleTimeout` ms without work (10 seconds by
 default; `0` ends it as soon as its task does, unless a task is waiting).
