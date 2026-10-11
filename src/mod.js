@@ -100,6 +100,24 @@ const isArrayBuffer = (value) => {
   }
 };
 
+const urlHref = Object.getOwnPropertyDescriptor(URL.prototype, "href").get;
+
+/**
+ * The address of `value` if it is a URL, from this realm or another (e.g. an
+ * iframe), where `instanceof` would say no.
+ * @private
+ *
+ * @param {*} value
+ * @returns {string|undefined}
+ */
+const hrefOf = (value) => {
+  try {
+    return urlHref.call(value);
+  } catch {
+    return undefined;
+  }
+};
+
 /**
  * Ensures at runtime the imports value is valid.
  * @private
@@ -109,8 +127,9 @@ const isArrayBuffer = (value) => {
  * @returns {string|undefined} - the validated imports value
  */
 const ensureImportsValue = (value) => {
-  if (value instanceof URL) {
-    return value.href;
+  const href = hrefOf(value);
+  if (href !== undefined) {
+    return href;
   } else if (typeof value === "string") {
     return value;
   } else if (value === undefined) {
@@ -142,8 +161,9 @@ export class Module {
    */
   constructor(options) {
     const source = options?.source ?? options;
-    if (source instanceof URL) {
-      this.#module = WebAssembly.compileStreaming(fetch(source.href));
+    const href = hrefOf(source);
+    if (href !== undefined) {
+      this.#module = WebAssembly.compileStreaming(fetch(href));
     } else if (typeof source === "string") {
       this.#module = WebAssembly.compileStreaming(fetch(source));
     } else if (isArrayBuffer(source)) {
@@ -162,8 +182,9 @@ export class Module {
     this.#module.catch(() => {});
 
     const workerUrl = options?.workerUrl;
-    if (workerUrl instanceof URL) {
-      this.#workerUrl = workerUrl.href;
+    const workerHref = hrefOf(workerUrl);
+    if (workerHref !== undefined) {
+      this.#workerUrl = workerHref;
     } else if (typeof workerUrl === "string" || workerUrl === undefined) {
       this.#workerUrl = workerUrl;
     } else {

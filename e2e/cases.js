@@ -516,12 +516,16 @@ export function cases(ctx) {
           source: await ctx.bytes("probe.wasm"),
           idleTimeout: 10_000,
         });
-        let stale;
-        await module.task((exports) => {
+        let stale, staleMemcpy;
+        await module.task((exports, { memcpy }) => {
           stale = exports;
+          staleMemcpy = memcpy;
           return exports.inc();
         })();
         await assert.rejects(stale.inc(), { message: "Sandbox terminated" });
+        await assert.rejects(staleMemcpy(null, 0, 1), {
+          message: "Sandbox terminated",
+        });
         assert.equal(await module.api().inc(), 1);
         module.close();
       },
@@ -596,6 +600,58 @@ export function cases(ctx) {
           assert.equal(await module.api().add(1, 2), 3);
         });
         assert.equal(stats.urls[0], ctx.workerEntry.href);
+      },
+    },
+    {
+      name: "a Node-style process global does not change the worker",
+      skip: () => /^(deno|bun) /.test(ctx.runtime) ? "browsers only" : false,
+      async run() {
+        // Electron pages and some bundles define `process`: still a browser.
+        const had = Object.hasOwn(globalThis, "process");
+        const previous = globalThis.process;
+        globalThis.process = { versions: { node: "22.0.0" } };
+        try {
+          const module = await probe();
+          const stats = await trackWorkers(async () => {
+            assert.equal(await module.api().add(1, 2), 3);
+          });
+          module.close();
+          const url = stats.urls.at(-1);
+          assert.ok(
+            url.endsWith("/src/sandbox/worker-entry.js"),
+            `started ${url}`,
+          );
+        } finally {
+          if (had) globalThis.process = previous;
+          else delete globalThis.process;
+        }
+      },
+    },
+    {
+      name: "accepts URL objects from another realm",
+      skip: () =>
+        typeof document === "undefined" ? "needs a page for an iframe" : false,
+      async run() {
+        const frame = document.createElement("iframe");
+        document.body.append(frame);
+        try {
+          const url = (href) => new frame.contentWindow.URL(String(href));
+          const source = url(ctx.url("example.wasm"));
+          assert.ok(!(source instanceof URL), "the URL is from this realm");
+          const module = new Module({
+            source,
+            workerUrl: url(ctx.workerEntry),
+          });
+          module.defaultImports = url(ctx.importsUrl);
+          assert.equal(await module.api().fibonacci(5), 8);
+          assert.equal(
+            await module.api({ imports: url(ctx.importsUrl) }).fibonacci(5),
+            8,
+          );
+          module.close();
+        } finally {
+          frame.remove();
+        }
       },
     },
     {
