@@ -33,6 +33,8 @@
 /**
  * @typedef {Object} ModuleOptions
  * @property {URL|string|ArrayBuffer|ArrayBufferView} source - The source of the WebAssembly
+ * @property {URL|string} [workerUrl] - The sandbox worker module to start
+ *   instead of Exu's own (e.g. one a bundler emitted).
  */
 
 /**
@@ -122,6 +124,7 @@ const ensureImportsValue = (value) => {
 export class Module {
   #module;
   #importsUrl;
+  #workerUrl;
 
   /**
    * Creates a Module instance.
@@ -148,6 +151,15 @@ export class Module {
     }
     // Tasks surface compile failures; until one runs, they are not unhandled.
     this.#module.catch(() => {});
+
+    const workerUrl = options?.workerUrl;
+    if (workerUrl instanceof URL) {
+      this.#workerUrl = workerUrl.href;
+    } else if (typeof workerUrl === "string" || workerUrl === undefined) {
+      this.#workerUrl = workerUrl;
+    } else {
+      throw new TypeError("`workerUrl` must be a URL or a string");
+    }
   }
 
   /**
@@ -179,7 +191,12 @@ export class Module {
 
     const importsUrl = ensureImportsValue(imports) ?? this.#importsUrl;
 
-    return new Sandbox({ module, importsUrl, signal });
+    return new Sandbox({
+      module,
+      importsUrl,
+      signal,
+      workerUrl: this.#workerUrl,
+    });
   }
 
   /**

@@ -37,6 +37,12 @@ export type TaskCallback<T = unknown> = (
 export interface ModuleOptions {
   /** WebAssembly module URL, fetch URL, or byte buffer. */
   source: URL | string | ArrayBuffer | ArrayBufferView;
+  /**
+   * Sandbox worker module to start instead of Exu's own
+   * `src/sandbox/worker-entry.js`, e.g. a copy a bundler emitted. It must
+   * come from the same Exu version.
+   */
+  workerUrl?: URL | string;
 }
 
 /**

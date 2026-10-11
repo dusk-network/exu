@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add a `workerUrl` module option to start a given sandbox worker. [#18]
+
 ### Changed
 
+- Start sandbox workers in browsers from `src/sandbox/worker-entry.js` when it
+  loads, so bundlers emit it and `worker-src 'self'` pages can run tasks. [#18]
+- Reject tasks with an "Incompatible Exu sandbox worker" error when the worker
+  speaks another message protocol. [#18]
 - Throw `TypeError` for module sources that are not a URL, a string, an
   `ArrayBuffer` or an `ArrayBuffer` view. [#17]
 
@@ -74,6 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#15]: https://github.com/dusk-network/exu/issues/15
 [#16]: https://github.com/dusk-network/exu/issues/16
 [#17]: https://github.com/dusk-network/exu/issues/17
+[#18]: https://github.com/dusk-network/exu/issues/18
 [#8]: https://github.com/dusk-network/exu/issues/8
 
 <!-- VERSIONS -->

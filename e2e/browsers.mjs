@@ -49,7 +49,7 @@ const base = `http://127.0.0.1:${server.address().port}/e2e/browser`;
 const engines = (process.env.ENGINES ?? "chromium,firefox,webkit").split(",");
 const pages = [
   ["isolated", "index.html", []],
-  ["extension-csp", "csp.html", ["accepts a Uint8Array source", "wallet-core"]],
+  ["extension-csp", "csp.html", []],
 ];
 const report = [];
 let ok = true;
@@ -77,7 +77,6 @@ for (const engine of engines) {
     );
     const query = new URLSearchParams([
       ["runtime", runtime],
-      ...(label === "extension-csp" ? [["csp", "1"]] : []),
       ...only.map((o) => ["only", o]),
     ]);
     try {

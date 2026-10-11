@@ -20,7 +20,6 @@ const only = params.getAll("only");
 globalThis.__e2e = runAll({
   Module,
   runtime: params.get("runtime") ?? navigator.userAgent,
-  csp: params.has("csp"),
   hardwareConcurrency: navigator.hardwareConcurrency,
   bytes: async (name) => {
     const response = await fetch(asset(name));
@@ -29,6 +28,7 @@ globalThis.__e2e = runAll({
   },
   url: asset,
   importsUrl: new URL("../../tests/custom-imports.js", import.meta.url),
+  workerEntry: new URL("../../src/sandbox/worker-entry.js", import.meta.url),
   unhandled,
 }, {
   only: only.length ? only : undefined,

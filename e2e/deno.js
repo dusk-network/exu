@@ -22,6 +22,7 @@ const { summary, results } = await runAll({
   bytes: (name) => Deno.readFile(asset(name)),
   url: asset,
   importsUrl: new URL("../tests/custom-imports.js", import.meta.url),
+  workerEntry: new URL("../src/sandbox/worker-entry.js", import.meta.url),
   unhandled,
 }, { only: Deno.args.length ? Deno.args : undefined });
 

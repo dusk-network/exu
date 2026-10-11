@@ -5,7 +5,16 @@
 // Copyright (c) DUSK NETWORK. All rights reserved.
 
 import { isExportName, NullTarget } from "../proxies.js";
-import worker from "./worker.js";
+import { spawnWorker } from "./spawn.js";
+
+/**
+ * Version of the messages between Sandbox and its worker. Keep in step with
+ * `PROTOCOL` in ./worker.js.
+ */
+export const PROTOCOL = 1;
+
+/** How long a worker may take to start and accept the module, in ms. */
+const START_TIMEOUT = 30_000;
 
 const isAddress = (value) => Number.isSafeInteger(value) && value >= 0;
 
@@ -19,6 +28,13 @@ const errorTypes = {
   TypeError,
 };
 
+const incompatibleWorker = (protocol) =>
+  new Error(
+    `Incompatible Exu sandbox worker: protocol ${
+      protocol ?? "unknown"
+    }, expected ${PROTOCOL}`,
+  );
+
 const responseError = (details) => {
   if (!details) return new Error("Invalid sandbox response");
   const ErrorType = Object.hasOwn(errorTypes, details.name)
@@ -29,11 +45,6 @@ const responseError = (details) => {
   error.stack = details.stack;
   return error;
 };
-
-// Create a Blob URL for the worker code.
-const workerUrl = URL.createObjectURL(
-  new Blob([`(${worker})()`], { type: "application/javascript" }),
-);
 
 /**
  * Creates a sandbox environment for executing code in a separate context
@@ -56,9 +67,17 @@ export class Sandbox {
    * @param {string} config.module - The module URL to load in the worker.
    * @param {string} config.importsUrl - The URL for the module's imports.
    * @param {AbortSignal} config.signal - An optional AbortSignal to cancel operations.
+   * @param {URL|string} [config.workerUrl] - The worker module to start (see {@link spawnWorker}).
+   * @param {number} [config.startTimeout] - How long the worker may take to
+   *   start, in ms.
    */
-  constructor({ module, importsUrl, signal }) {
-    this.#worker = new Worker(workerUrl, { type: "module" });
+  constructor({
+    module,
+    importsUrl,
+    signal,
+    workerUrl,
+    startTimeout = START_TIMEOUT,
+  }) {
     this.#signal = signal;
 
     const mc = new MessageChannel();
@@ -73,13 +92,43 @@ export class Sandbox {
           : new Error(event.message || "Sandbox worker failed"),
       );
     };
-    this.#worker.addEventListener("error", fail);
-    this.#worker.addEventListener("messageerror", fail);
     this.#memoryPort.addEventListener("messageerror", fail);
 
-    this.#initialized = this.send(this.#worker, { module, importsUrl }, [
-      mc.port2,
-    ]);
+    // Requests queue behind the worker's start; a failed start ends the
+    // sandbox with that error.
+    this.#pending = spawnWorker(workerUrl).then((worker) => {
+      if (this.#terminated) {
+        worker.terminate();
+        return;
+      }
+      this.#worker = worker;
+      worker.addEventListener("error", fail);
+      worker.addEventListener("messageerror", fail);
+    }).catch((error) => this.terminate(error));
+
+    this.#initialized = this.send(
+      () => this.#worker,
+      { module, importsUrl, protocol: PROTOCOL },
+      [mc.port2],
+    ).then((initialized) => {
+      if (initialized?.protocol !== PROTOCOL) {
+        throw incompatibleWorker(initialized?.protocol);
+      }
+      return initialized;
+    });
+    // Never transferred when the start fails first: close it here.
+    this.#initialized.catch(() => mc.port2.close());
+
+    // A worker whose download stalls would leave the task pending for good.
+    const timer = setTimeout(
+      () =>
+        this.terminate(
+          new Error(`Sandbox worker did not start within ${startTimeout} ms`),
+        ),
+      startTimeout,
+    );
+    const stop = () => clearTimeout(timer);
+    this.#initialized.then(stop, stop);
   }
 
   /**
@@ -91,7 +140,7 @@ export class Sandbox {
     return new Proxy(NullTarget, {
       get: (_, prop) =>
         isExportName(prop)
-          ? (...args) => this.send(this.#worker, { member: prop, args })
+          ? (...args) => this.send(() => this.#worker, { member: prop, args })
           : undefined,
     });
   }
@@ -177,7 +226,8 @@ export class Sandbox {
   /**
    * Sends a message to the specified receiver (worker or message port).
    *
-   * @param {Worker|MessagePort} receiver - The message receiver.
+   * @param {Worker|MessagePort|() => Worker} receiver - The message receiver,
+   *   or a getter for the worker once it started.
    * @param {...*} args - See `postMessage` arguments.
    *
    * @returns {Promise<any>} A promise that resolves with the response from the receiver.
@@ -185,7 +235,10 @@ export class Sandbox {
   send = (receiver, ...args) => {
     const request = this.#pending.then(() => {
       if (this.#terminated) throw this.#failure;
-      return this.#send(receiver, ...args);
+      return this.#send(
+        typeof receiver === "function" ? receiver() : receiver,
+        ...args,
+      );
     });
     this.#pending = request.catch(() => {});
     return request;
@@ -218,8 +271,11 @@ export class Sandbox {
       receiver.onmessage = ({ data }) => {
         if (data?.ok === true) {
           finish(resolve, data.value);
+        } else if (data?.ok === false) {
+          finish(reject, responseError(data.error));
         } else {
-          finish(reject, responseError(data?.error));
+          // Workers from Exu 0.1 reply without an envelope.
+          finish(reject, incompatibleWorker());
         }
       };
 
@@ -237,6 +293,6 @@ export class Sandbox {
     this.#failure = reason;
     this.#reject?.(reason);
     this.#memoryPort.close();
-    this.#worker.terminate();
+    this.#worker?.terminate();
   };
 }

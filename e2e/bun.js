@@ -22,6 +22,7 @@ const { summary, results } = await runAll({
   bytes: async (name) => new Uint8Array(await readFile(asset(name))),
   url: asset,
   importsUrl: new URL("../tests/custom-imports.js", import.meta.url),
+  workerEntry: new URL("../src/sandbox/worker-entry.js", import.meta.url),
   unhandled,
 }, { only: only.length ? only : undefined });
 

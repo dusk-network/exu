@@ -5,6 +5,9 @@
 // Copyright (c) DUSK NETWORK. All rights reserved.
 
 export default function () {
+  // Version of the messages with Sandbox; keep in step with its `PROTOCOL`.
+  const PROTOCOL = 1;
+
   const addListener = addEventListener.bind(self, "message");
   const removeListener = removeEventListener.bind(self, "message");
 
@@ -103,11 +106,17 @@ export default function () {
   // Module entry point
   addListener(async function main({ data, ports }) {
     try {
+      // A host of another protocol reports the mismatch from this reply.
+      if (data?.protocol !== PROTOCOL) {
+        postMessage(success({ protocol: PROTOCOL }));
+        return;
+      }
       await init(data, ports);
       removeListener(main);
       addListener(handleRequest);
 
       const initialized = {
+        protocol: PROTOCOL,
         memory: null,
         globals: getGlobals(data.module),
       };
