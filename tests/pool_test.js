@@ -174,3 +174,27 @@ Deno.test("idleTimeout must be a number", () => {
     );
   }
 });
+
+Deno.test("a worker that fails the handshake is ended, not pooled", async () => {
+  // Speaks Exu's envelope, but another protocol.
+  const workerUrl = URL.createObjectURL(
+    new Blob([
+      "onmessage = () => postMessage({ ok: true, value: { protocol: 99 } });",
+    ], {
+      type: "application/javascript",
+    }),
+  );
+  const module = new Module({ source: ADD_MODULE, workers: 1, workerUrl });
+  try {
+    const stats = await countingWorkers(() =>
+      assert.rejects(
+        module.api().add(1, 2),
+        /Incompatible Exu sandbox worker: protocol 99/,
+      )
+    );
+    assert.equal(stats.alive, 0, "an incompatible worker stayed alive");
+  } finally {
+    module.close();
+    URL.revokeObjectURL(workerUrl);
+  }
+});

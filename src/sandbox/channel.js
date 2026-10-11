@@ -122,8 +122,9 @@ export class WorkerChannel {
         throw incompatibleWorker(initialized?.protocol);
       }
     });
-    // Surfaced through the first task's `begin`.
-    this.ready.catch(() => {});
+    // A worker that failed its start is never pooled; the error surfaces
+    // through the first task's `begin`.
+    this.ready.catch((error) => this.kill(error));
 
     // A worker whose download stalls would leave its task pending for good.
     const timer = setTimeout(
