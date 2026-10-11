@@ -49,14 +49,6 @@ import { isExportName, MemoryProxy, NullTarget } from "./proxies.js";
 import { Sandbox } from "./sandbox/mod.js";
 
 /**
- * Ensures at runtime the imports value is valid.
- * @private
- *
- * @param {URL|string} [value] - the imports value
- *
- * @returns {string|undefined} - the validated imports value
- */
-/**
  * Settles like `promise`, but rejects with the abort reason as soon as
  * `signal` aborts.
  * @private
@@ -101,12 +93,20 @@ const isArrayBuffer = (value) => {
   }
 };
 
+/**
+ * Ensures at runtime the imports value is valid.
+ * @private
+ *
+ * @param {URL|string} [value] - the imports value
+ *
+ * @returns {string|undefined} - the validated imports value
+ */
 const ensureImportsValue = (value) => {
   if (value instanceof URL) {
     return value.href;
   } else if (typeof value === "string") {
     return value;
-  } else if (typeof value === "undefined" || null) {
+  } else if (value === undefined) {
     return undefined;
   } else {
     throw new TypeError("imports can be only a URL, a string or undefined");
