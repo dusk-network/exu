@@ -1,2 +1,4 @@
 coverage/
 deno.lock
+node_modules/
+e2e/assets/wallet-core-*.wasm
