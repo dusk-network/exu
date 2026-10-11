@@ -91,7 +91,7 @@ const task = module.task(async ({ malloc, free, byte, set_byte }, { memory }) =>
 Use the `memcpy` function to copy data between JavaScript and the WebAssembly environment, useful for scenarios where direct memory sharing is not feasible:
 
 ```javascript
-const task = module.task(async ({ malloc, free, memcpy }) => {
+const task = module.task(async ({ malloc, free }, { memcpy }) => {
   let ptr = await malloc(size);
   let data = new Uint8Array(size);
 
