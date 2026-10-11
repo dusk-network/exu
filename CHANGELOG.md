@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Stop modules first used after their construction tick from raising an
   unhandled rejection when compilation fails. [#14]
+- Stop `api()` and task `exports` proxies from acting as thenables, so awaiting
+  or returning them settles. [#15]
 
 ## [0.2.0] - 2026-08-31
 
@@ -60,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- ISSUES -->
 
 [#14]: https://github.com/dusk-network/exu/issues/14
+[#15]: https://github.com/dusk-network/exu/issues/15
 [#8]: https://github.com/dusk-network/exu/issues/8
 
 <!-- VERSIONS -->

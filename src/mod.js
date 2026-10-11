@@ -45,7 +45,7 @@
  * @typedef {Object.<string, *>} Options
  */
 
-import { MemoryProxy, NullTarget } from "./proxies.js";
+import { isExportName, MemoryProxy, NullTarget } from "./proxies.js";
 import { Sandbox } from "./sandbox/mod.js";
 
 /**
@@ -169,7 +169,9 @@ export class Module {
    */
   api = (options = {}) =>
     new Proxy(NullTarget, {
-      get: (_, prop) => (...args) =>
-        this.task((exports) => exports[prop](...args))(options),
+      get: (_, prop) =>
+        isExportName(prop)
+          ? (...args) => this.task((exports) => exports[prop](...args))(options)
+          : undefined,
     });
 }

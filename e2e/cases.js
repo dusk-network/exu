@@ -213,7 +213,6 @@ function baseCases(ctx) {
     },
     {
       name: "api() proxies are not thenable",
-      known: "#15",
       async run() {
         const module = await probe();
         assert.equal(
@@ -232,7 +231,6 @@ function baseCases(ctx) {
     },
     {
       name: "a task can return its exports proxy",
-      known: "#15",
       async run() {
         const module = await probe();
         await withoutLeftovers((signal) =>
