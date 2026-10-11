@@ -107,6 +107,25 @@ const task = module.task(async ({ malloc, free }, { memcpy }) => {
 });
 ```
 
+### Workers and Content Security Policy
+
+In browsers, Exu starts each sandbox worker from `src/sandbox/worker-entry.js`,
+next to its own module. Bundlers such as Vite and webpack recognise this and
+emit the worker as a file of their own, which pages limited to
+`worker-src 'self'` (browser extensions, for example) can start. If that file
+does not start (Exu was loaded from another origin, or bundled without it), Exu
+falls back to a worker built from a Blob URL, which `worker-src 'self'` refuses.
+Deno, Bun and Node always use the Blob worker, which needs no file access.
+
+To start a different copy of the worker, pass its URL:
+
+```javascript
+const module = new Module({ source, workerUrl });
+```
+
+The worker must come from the same Exu version. A mismatched worker rejects
+tasks with an "Incompatible Exu sandbox worker" error.
+
 ## License
 
 Exu is made available under the [Mozilla Public License 2.0 (MPL 2.0)](https://www.mozilla.org/en-US/MPL/2.0/). You are encouraged to use, modify, and distribute the library in compliance with the terms set forth in the MPL 2.0.

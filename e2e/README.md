@@ -13,7 +13,7 @@ cd e2e && npm install && node browsers.mjs   # Chromium, Firefox, WebKit
 
 Pass case names (or parts of them) to run a subset.
 
-`browsers.mjs` serves the repository cross-origin isolated, and once more under
+`browsers.mjs` runs the suite twice per engine: cross-origin isolated, and under
 a browser-extension CSP (`worker-src 'self'`).
 
 Cases marked `known` reproduce an open issue. They are reported as `KNOWN` while

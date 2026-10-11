@@ -13,6 +13,7 @@
 // ctx: {
 //   Module, runtime, hardwareConcurrency,
 //   bytes(name): Promise<Uint8Array>, url(name): URL, importsUrl: URL,
+//   workerEntry: URL (Exu's own worker module),
 //   unhandled: unknown[]  (unhandled rejections recorded by the runner)
 // }
 
@@ -24,13 +25,14 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 /** Counts workers created/terminated while `fn` runs. */
 async function trackWorkers(fn) {
   const Original = globalThis.Worker;
-  const stats = { created: 0, terminated: 0, alive: 0, maxAlive: 0 };
+  const stats = { created: 0, terminated: 0, alive: 0, maxAlive: 0, urls: [] };
   const workers = new Set();
   class Tracked extends Original {
     #ended = false;
     constructor(...args) {
       super(...args);
       workers.add(this);
+      stats.urls.push(String(args[0]));
       stats.created++;
       stats.alive++;
       stats.maxAlive = Math.max(stats.maxAlive, stats.alive);
@@ -127,12 +129,6 @@ async function longestStall(fn) {
 }
 
 export function cases(ctx) {
-  const list = baseCases(ctx);
-  // Under `worker-src 'self'` the blob-URL worker is refused outright.
-  return ctx.csp ? list.map((c) => ({ ...c, known: "#18" })) : list;
-}
-
-function baseCases(ctx) {
   const { Module } = ctx;
   const probe = async () => new Module(await ctx.bytes("probe.wasm"));
 
@@ -460,6 +456,7 @@ function baseCases(ctx) {
       name: "workers end when their task resolves, rejects or throws",
       async run() {
         const module = await probe();
+        await module.api().add(1, 2); // browsers probe the worker file first
         const stats = await trackWorkers(async () => {
           await module.task(({ inc }) => inc())();
           await module.api().trap().catch(() => {});
@@ -475,6 +472,61 @@ function baseCases(ctx) {
         });
         assert.equal(stats.created, 4, `${stats.created} worker(s) started`);
         assert.equal(stats.alive, 0, `${stats.alive} worker(s) left running`);
+      },
+    },
+
+    // ── The sandbox worker ──────────────────────────────────────────────
+    {
+      name: "starts Exu's worker file in browsers, a Blob worker elsewhere",
+      async run() {
+        const module = await probe();
+        const stats = await trackWorkers(() => module.api().add(1, 2));
+        const url = stats.urls.at(-1);
+        if (/^(deno|bun) /.test(ctx.runtime)) {
+          assert.ok(url.startsWith("blob:"), `started ${url}`);
+        } else {
+          assert.ok(
+            url.endsWith("/src/sandbox/worker-entry.js"),
+            `started ${url}`,
+          );
+        }
+      },
+    },
+    {
+      name: "starts the worker given as workerUrl",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({ source, workerUrl: ctx.workerEntry });
+        const stats = await trackWorkers(async () => {
+          assert.equal(await module.api().add(1, 2), 3);
+        });
+        assert.equal(stats.urls[0], ctx.workerEntry.href);
+      },
+    },
+    {
+      name: "a worker from another Exu version fails clearly",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({
+          source,
+          workerUrl: ctx.url("legacy-worker.js"),
+        });
+        await assert.rejects(module.api().add(1, 2), {
+          message: /Incompatible Exu sandbox worker/,
+        });
+      },
+    },
+    {
+      name: "rejects a workerUrl that is not a URL or a string",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        let error;
+        try {
+          new Module({ source, workerUrl: 42 });
+        } catch (e) {
+          error = e;
+        }
+        assert.equal(error?.name, "TypeError");
       },
     },
 
