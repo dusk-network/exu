@@ -1,0 +1,13 @@
+{
+  "name": "@dusk/exu-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deno": "deno run --allow-read --allow-net ./deno.js",
+    "bun": "bun ./bun.js",
+    "browsers": "node ./browsers.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.64.0"
+  }
+}

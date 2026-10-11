@@ -17,3 +17,4 @@ jobs:
       - run: deno lint
       - run: deno check src/mod.js
       - run: deno task coverage
+      - run: deno run --allow-read --allow-net e2e/deno.js
