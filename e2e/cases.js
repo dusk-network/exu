@@ -849,6 +849,9 @@ export function cases(ctx) {
       async run() {
         const module = await probe();
         await tick(1000); // let earlier cases' workers wind down
+        // Time the call alone, on a warm worker: Deno blocks the caller while
+        // it starts one (see the burst case below).
+        assert.equal(await module.api().add(1, 2), 3);
         const stall = await longestStall(() =>
           module.api().burn(300_000_000, 1)
         );
