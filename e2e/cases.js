@@ -668,7 +668,6 @@ function baseCases(ctx) {
     },
     {
       name: "accepts an ArrayBuffer source",
-      known: "#17",
       async run() {
         const { buffer } = await ctx.bytes("probe.wasm");
         assert.equal(await new Module(buffer).api().add(2, 3), 5);
@@ -676,7 +675,6 @@ function baseCases(ctx) {
     },
     {
       name: "accepts other ArrayBuffer views",
-      known: "#17",
       async run() {
         const bytes = await ctx.bytes("probe.wasm");
         // At an offset into a larger buffer, as views often are.
@@ -717,7 +715,6 @@ function baseCases(ctx) {
     },
     {
       name: "rejects other sources with a TypeError",
-      known: "#17",
       run() {
         for (const source of [null, 42, {}]) {
           let error;

@@ -36,7 +36,7 @@ export type TaskCallback<T = unknown> = (
  */
 export interface ModuleOptions {
   /** WebAssembly module URL, fetch URL, or byte buffer. */
-  source: URL | string | Uint8Array;
+  source: URL | string | ArrayBuffer | ArrayBufferView;
 }
 
 /**

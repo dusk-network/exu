@@ -32,7 +32,7 @@
 
 /**
  * @typedef {Object} ModuleOptions
- * @property {URL|string|Uint8Array} source - The source of the WebAssembly
+ * @property {URL|string|ArrayBuffer|ArrayBufferView} source - The source of the WebAssembly
  */
 
 /**
@@ -79,6 +79,28 @@ const untilAborted = (promise, signal) => {
   });
 };
 
+const arrayBufferLength = Object.getOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  "byteLength",
+).get;
+
+/**
+ * Whether `value` is an ArrayBuffer, from this realm or another (e.g. an
+ * iframe), where `instanceof` would say no.
+ * @private
+ *
+ * @param {*} value
+ * @returns {boolean}
+ */
+const isArrayBuffer = (value) => {
+  try {
+    arrayBufferLength.call(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const ensureImportsValue = (value) => {
   if (value instanceof URL) {
     return value.href;
@@ -112,13 +134,17 @@ export class Module {
       this.#module = WebAssembly.compileStreaming(fetch(source.href));
     } else if (typeof source === "string") {
       this.#module = WebAssembly.compileStreaming(fetch(source));
-    } else if (
-      source instanceof Uint8Array ||
-      Object.getPrototypeOf(source) instanceof Uint8Array
-    ) {
+    } else if (isArrayBuffer(source)) {
       this.#module = WebAssembly.compile(source);
+    } else if (ArrayBuffer.isView(source)) {
+      // Engines differ on which views they compile (V8 refuses DataView).
+      this.#module = WebAssembly.compile(
+        new Uint8Array(source.buffer, source.byteOffset, source.byteLength),
+      );
     } else {
-      throw ReferenceError("`source` should be either a URL or a buffer");
+      throw new TypeError(
+        "`source` must be a URL, a string, an ArrayBuffer or an ArrayBuffer view",
+      );
     }
     // Tasks surface compile failures; until one runs, they are not unhandled.
     this.#module.catch(() => {});

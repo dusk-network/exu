@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Throw `TypeError` for module sources that are not a URL, a string, an
+  `ArrayBuffer` or an `ArrayBuffer` view. [#17]
+
 ### Fixed
 
+- Accept `ArrayBuffer` and `ArrayBuffer` view module sources. [#17]
 - Stop modules first used after their construction tick from raising an
   unhandled rejection when compilation fails. [#14]
 - Stop `api()` and task `exports` proxies from acting as thenables, so awaiting
@@ -67,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#14]: https://github.com/dusk-network/exu/issues/14
 [#15]: https://github.com/dusk-network/exu/issues/15
 [#16]: https://github.com/dusk-network/exu/issues/16
+[#17]: https://github.com/dusk-network/exu/issues/17
 [#8]: https://github.com/dusk-network/exu/issues/8
 
 <!-- VERSIONS -->
