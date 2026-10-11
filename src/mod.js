@@ -56,6 +56,29 @@ import { Sandbox } from "./sandbox/mod.js";
  *
  * @returns {string|undefined} - the validated imports value
  */
+/**
+ * Settles like `promise`, but rejects with the abort reason as soon as
+ * `signal` aborts.
+ * @private
+ *
+ * @param {Promise} promise - The work to wait for
+ * @param {AbortSignal} [signal] - Stops the wait
+ *
+ * @returns {Promise}
+ */
+const untilAborted = (promise, signal) => {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    // Handled first, so the work's own late failure is never unhandled.
+    promise.then(resolve, reject).finally(() =>
+      signal.removeEventListener("abort", abort)
+    );
+    if (signal.aborted) return abort();
+    signal.addEventListener("abort", abort, { once: true });
+  });
+};
+
 const ensureImportsValue = (value) => {
   if (value instanceof URL) {
     return value.href;
@@ -124,8 +147,8 @@ export class Module {
   async #createSandbox(options = {}) {
     const { signal, imports } = options;
 
-    signal?.throwIfAborted();
-    const module = await this.#module;
+    const module = await untilAborted(this.#module, signal);
+    // The abort may land between compilation settling and this line.
     signal?.throwIfAborted();
 
     const importsUrl = ensureImportsValue(imports) ?? this.#importsUrl;
@@ -141,18 +164,46 @@ export class Module {
    */
   task(fn) {
     return async (options = {}) => {
-      const sandbox = await this.#createSandbox(options);
+      const { signal } = options;
+      let sandbox;
+      try {
+        sandbox = await this.#createSandbox(options);
+      } catch (error) {
+        // Aborted meanwhile: the abort reason wins over, say, a compile error.
+        signal?.throwIfAborted();
+        throw error;
+      }
+      // Stop the worker on abort, even between requests to it.
+      const abort = () => sandbox.terminate(signal.reason);
+      signal?.addEventListener("abort", abort, { once: true });
 
       try {
-        const memory = await sandbox.memory;
-        const globals = await sandbox.globals;
+        // An abort rejects the task at once, even while the callback waits on
+        // something else; whatever it still runs then meets the dead sandbox.
+        const result = await untilAborted(
+          (async () => {
+            const memory = await sandbox.memory;
+            const globals = await sandbox.globals;
+            // A task aborted while it started never runs its callback.
+            signal?.throwIfAborted();
 
-        return await fn(sandbox.exports, {
-          memory: memory ?? MemoryProxy,
-          memcpy: sandbox.memcpy,
-          globals,
-        });
+            return await fn(sandbox.exports, {
+              memory: memory ?? MemoryProxy,
+              memcpy: sandbox.memcpy,
+              globals,
+            });
+          })(),
+          signal,
+        );
+        signal?.throwIfAborted();
+        return result;
+      } catch (error) {
+        // An aborted task rejects with the abort reason, however the callback
+        // handled the failed request.
+        signal?.throwIfAborted();
+        throw error;
       } finally {
+        signal?.removeEventListener("abort", abort);
         sandbox.terminate();
       }
     };

@@ -293,7 +293,6 @@ function baseCases(ctx) {
     },
     {
       name: "an abort after the task's last call still rejects the task",
-      known: "#16",
       async run() {
         const module = await probe();
         const controller = new AbortController();
@@ -307,6 +306,97 @@ function baseCases(ctx) {
           })({ signal: controller.signal }),
           { is: reason },
         );
+      },
+    },
+    {
+      name:
+        "an abort while the callback waits on something else rejects at once",
+      async run() {
+        const module = await probe();
+        const controller = new AbortController();
+        const reason = new Error("stop waiting");
+        const stats = await trackWorkers(async () => {
+          const waiting = Promise.withResolvers();
+          const task = module.task(async ({ inc }) => {
+            await inc();
+            waiting.resolve();
+            await new Promise(() => {}); // never settles
+          })({ signal: controller.signal });
+          await waiting.promise; // no request is in flight from here on
+          controller.abort(reason);
+          await assert.rejects(task, { is: reason }, 1000);
+        });
+        assert.equal(stats.alive, 0, "the task's worker was not terminated");
+      },
+    },
+    {
+      name: "an abort racing a task's start leaves nothing unhandled",
+      async run() {
+        const module = await probe();
+        await module.api().add(1, 2);
+        for (let hops = 0; hops < 6; hops++) {
+          const controller = new AbortController();
+          const reason = new Error("raced");
+          const task = module.task(({ add }) => add(1, 2))({
+            signal: controller.signal,
+          });
+          for (let i = 0; i < hops; i++) await Promise.resolve();
+          controller.abort(reason);
+          await task.catch(() => {});
+        }
+      },
+    },
+    {
+      name: "an aborted task never runs its callback",
+      async run() {
+        const module = await probe();
+        await module.api().add(1, 2);
+        let ran = 0;
+        for (let batch = 0; batch < 10; batch++) {
+          const controllers = Array.from(
+            { length: 8 },
+            () => new AbortController(),
+          );
+          const tasks = controllers.map((controller, i) =>
+            module.task(() => {
+              if (i === 0) controllers.slice(1).forEach((c) => c.abort());
+              else if (controller.signal.aborted) ran++;
+            })({ signal: controller.signal }).catch(() => {})
+          );
+          await Promise.all(tasks);
+        }
+        assert.equal(ran, 0, `${ran} callback(s) ran after their abort`);
+      },
+    },
+    {
+      name: "an abort beats a compile error that settles after it",
+      async run() {
+        const module = new Module(INVALID);
+        await module.task(() => 1)().catch(() => {}); // compilation has failed
+        const controller = new AbortController();
+        const reason = new Error("aborted first");
+        const task = module.task(() => 1)({ signal: controller.signal });
+        await Promise.resolve();
+        controller.abort(reason);
+        await assert.rejects(task, { is: reason });
+      },
+    },
+    {
+      name: "an abort while the module is still loading rejects at once",
+      async run() {
+        const fetch = globalThis.fetch;
+        globalThis.fetch = () => new Promise(() => {}); // a stalled download
+        try {
+          const module = new Module("https://example.invalid/stalled.wasm");
+          const controller = new AbortController();
+          const reason = new Error("stop loading");
+          const task = module.task(() => 1)({ signal: controller.signal });
+          await tick(20);
+          controller.abort(reason);
+          await assert.rejects(task, { is: reason }, 1000);
+        } finally {
+          globalThis.fetch = fetch;
+        }
       },
     },
     {
