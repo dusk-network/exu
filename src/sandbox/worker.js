@@ -4,14 +4,17 @@
 //
 // Copyright (c) DUSK NETWORK. All rights reserved.
 
+// The sandbox worker. A host may reuse one worker for several tasks: `init`
+// hands over the compiled module once, then each task `begin`s with a fresh
+// instance, `call`s its exports and `end`s, which drops the instance.
 export default function () {
-  // Version of the messages with Sandbox; keep in step with its `PROTOCOL`.
-  const PROTOCOL = 1;
+  // Version of the messages with the host; keep in step with `PROTOCOL` in
+  // ./channel.js.
+  const PROTOCOL = 2;
 
-  const addListener = addEventListener.bind(self, "message");
-  const removeListener = removeEventListener.bind(self, "message");
-
-  const Internals = {
+  const state = {
+    module: null,
+    importsUrl: undefined,
     instance: null,
     imports: null,
     memoryPort: null,
@@ -27,38 +30,61 @@ export default function () {
     },
   });
 
-  const getGlobals = (module) =>
-    WebAssembly.Module.exports(module)
+  const incompatibleHost = (protocol) =>
+    new Error(
+      `Incompatible Exu host: protocol ${
+        protocol ?? "unknown"
+      }, expected ${PROTOCOL}`,
+    );
+
+  const getGlobals = () =>
+    WebAssembly.Module.exports(state.module)
       .filter(({ kind, name }) => kind === "global" && !name.startsWith("__"))
       .reduce(
         (acc, item) => (
-          (acc[item.name] = Internals.instance.exports[item.name].value), acc
+          (acc[item.name] = state.instance.exports[item.name].value), acc
         ),
         {},
       );
 
-  async function init({ module, importsUrl }, [port]) {
-    if (typeof importsUrl === "string") {
-      const importsModule = await import(importsUrl);
-      Internals.imports = importsModule.default;
-
-      Internals.instance = new WebAssembly.Instance(module, Internals.imports);
+  async function begin() {
+    if (typeof state.importsUrl === "string") {
+      const importsModule = await import(state.importsUrl);
+      state.imports = importsModule.default;
+      state.instance = new WebAssembly.Instance(state.module, state.imports);
 
       if (typeof importsModule.oninit === "function") {
-        await importsModule.oninit(Internals.instance);
+        await importsModule.oninit(state.instance);
       }
     } else {
-      Internals.instance = new WebAssembly.Instance(module);
+      state.instance = new WebAssembly.Instance(state.module);
     }
 
-    Internals.memoryPort = port;
-    Internals.memoryPort.onmessage = handleMemoryRequest;
+    const begun = { memory: null, globals: getGlobals() };
+
+    // `crossOriginIsolated` might be `undefined`; in that case, the behavior is
+    // the same as having the value `true`.
+    if (self.crossOriginIsolated !== false) {
+      begun.memory = state.imports?.env?.memory ?? null;
+    }
+
+    return begun;
+  }
+
+  function call({ member, args }) {
+    const method = state.instance?.exports[member];
+
+    if (typeof method !== "function") {
+      throw new TypeError(`${member} is not a function`);
+    }
+
+    return method(...args);
   }
 
   function handleMemoryRequest({ data: { get, set } }) {
     try {
-      const memory = Internals.imports?.env?.memory ??
-        Internals.instance?.exports?.memory;
+      const memory = state.imports?.env?.memory ??
+        state.instance?.exports?.memory;
 
       if (!(memory instanceof WebAssembly.Memory)) {
         throw new ReferenceError("WebAssembly.Memory is not defined");
@@ -71,63 +97,52 @@ export default function () {
 
         new Uint8Array(memory.buffer, dest, length).set(bytes);
         if (source instanceof Uint8Array) {
-          Internals.memoryPort.postMessage(success(source), [source.buffer]);
+          state.memoryPort.postMessage(success(source), [source.buffer]);
         } else {
-          Internals.memoryPort.postMessage(success(undefined));
+          state.memoryPort.postMessage(success(undefined));
         }
       } else if (get) {
         const { source, count } = get;
-        Internals.memoryPort.postMessage(
+        state.memoryPort.postMessage(
           success(new Uint8Array(new Uint8Array(memory.buffer, source, count))),
         );
       } else {
         throw new TypeError("Invalid memory request");
       }
     } catch (error) {
-      Internals.memoryPort.postMessage(failure(error));
+      state.memoryPort.postMessage(failure(error));
     }
   }
 
-  function handleRequest({ data }) {
+  addEventListener("message", async ({ data, ports }) => {
     try {
-      const { member, args } = data;
-      const method = Internals.instance.exports[member];
-
-      if (typeof method !== "function") {
-        throw new TypeError(`${member} is not a function`);
+      switch (data?.type) {
+        case "init":
+          // A host of another protocol reports the mismatch from this reply.
+          if (data.protocol !== PROTOCOL) {
+            postMessage(success({ protocol: PROTOCOL }));
+            break;
+          }
+          state.module = data.module;
+          state.importsUrl = data.importsUrl;
+          state.memoryPort = ports[0];
+          state.memoryPort.onmessage = handleMemoryRequest;
+          postMessage(success({ protocol: PROTOCOL }));
+          break;
+        case "begin":
+          postMessage(success(await begin()));
+          break;
+        case "call":
+          postMessage(success(call(data)));
+          break;
+        case "end":
+          state.instance = null;
+          state.imports = null;
+          postMessage(success(undefined));
+          break;
+        default:
+          throw incompatibleHost(data?.protocol);
       }
-
-      postMessage(success(method(...args)));
-    } catch (error) {
-      postMessage(failure(error));
-    }
-  }
-
-  // Module entry point
-  addListener(async function main({ data, ports }) {
-    try {
-      // A host of another protocol reports the mismatch from this reply.
-      if (data?.protocol !== PROTOCOL) {
-        postMessage(success({ protocol: PROTOCOL }));
-        return;
-      }
-      await init(data, ports);
-      removeListener(main);
-      addListener(handleRequest);
-
-      const initialized = {
-        protocol: PROTOCOL,
-        memory: null,
-        globals: getGlobals(data.module),
-      };
-
-      // `crossOriginIsolated` might be `undefined`; in that case, the behavior is
-      // the same as having the value `true`.
-      if (self.crossOriginIsolated !== false) {
-        initialized.memory = Internals.imports?.env?.memory ?? null;
-      }
-
-      postMessage(success(initialized));
     } catch (error) {
       postMessage(failure(error));
     }

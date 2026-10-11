@@ -10,9 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add a `workerUrl` module option to start a given sandbox worker. [#18]
+- Add `workers` and `idleTimeout` module options and `Module#close()`. [#3]
 
 ### Changed
 
+- Run tasks in a bounded pool of workers, each task in a fresh instance, and
+  hand a finished worker to the next waiting task. [#3]
 - Start sandbox workers in browsers from `src/sandbox/worker-entry.js` when it
   loads, so bundlers emit it and `worker-src 'self'` pages can run tasks. [#18]
 - Reject tasks with an "Incompatible Exu sandbox worker" error when the worker
@@ -78,6 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- ISSUES -->
 
+[#3]: https://github.com/dusk-network/exu/issues/3
 [#14]: https://github.com/dusk-network/exu/issues/14
 [#15]: https://github.com/dusk-network/exu/issues/15
 [#16]: https://github.com/dusk-network/exu/issues/16

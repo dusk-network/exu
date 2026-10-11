@@ -453,25 +453,105 @@ export function cases(ctx) {
       },
     },
     {
-      name: "workers end when their task resolves, rejects or throws",
+      name: "by default a worker ends with its task",
       async run() {
         const module = await probe();
         await module.api().add(1, 2); // browsers probe the worker file first
         const stats = await trackWorkers(async () => {
-          await module.task(({ inc }) => inc())();
+          assert.equal(await module.api().add(1, 2), 3);
+          assert.equal(await module.api().add(1, 2), 3);
+        });
+        assert.equal(stats.created, 2, `${stats.created} worker(s) started`);
+        assert.equal(stats.alive, 0, `${stats.alive} worker(s) left running`);
+      },
+    },
+    {
+      name: "a healthy worker serves the next task",
+      async run() {
+        const module = new Module({
+          source: await ctx.bytes("probe.wasm"),
+          idleTimeout: 10_000,
+        });
+        const stats = await trackWorkers(async () => {
+          await module.api().add(1, 2);
           await module.api().trap().catch(() => {});
           await module.task(() => {
-            throw new Error("sync");
+            throw new Error("callback");
           })().catch(() => {});
-          // deno-lint-ignore require-await
-          await module.task(async () => {
-            throw new Error("async");
-          })().catch(
-            () => {},
-          );
+          assert.equal(await module.api().inc(), 1);
+          module.close();
         });
-        assert.equal(stats.created, 4, `${stats.created} worker(s) started`);
+        assert.equal(stats.created, 1, `${stats.created} worker(s) started`);
         assert.equal(stats.alive, 0, `${stats.alive} worker(s) left running`);
+      },
+    },
+    {
+      name: "aborted and still-busy workers are not reused",
+      async run() {
+        const module = new Module({
+          source: await ctx.bytes("probe.wasm"),
+          idleTimeout: 10_000,
+        });
+        const stats = await trackWorkers(async () => {
+          const controller = new AbortController();
+          const spinning = module.api({ signal: controller.signal }).spin();
+          await tick(20);
+          controller.abort(new Error("stop"));
+          await spinning.catch(() => {});
+          // Returns while a call is still running in its worker.
+          await module.task(({ spin }) => {
+            spin().catch(() => {});
+          })();
+          assert.equal(await module.api().add(1, 2), 3);
+          module.close();
+        });
+        assert.equal(stats.created, 3, `${stats.created} worker(s) started`);
+        assert.equal(stats.alive, 0, `${stats.alive} worker(s) left running`);
+      },
+    },
+    {
+      name: "a finished task's exports cannot reach the next task",
+      async run() {
+        const module = new Module({
+          source: await ctx.bytes("probe.wasm"),
+          idleTimeout: 10_000,
+        });
+        let stale;
+        await module.task((exports) => {
+          stale = exports;
+          return exports.inc();
+        })();
+        await assert.rejects(stale.inc(), { message: "Sandbox terminated" });
+        assert.equal(await module.api().inc(), 1);
+        module.close();
+      },
+    },
+    {
+      name: "workers that loaded custom imports are not reused",
+      async run() {
+        const module = new Module({
+          source: await ctx.bytes("example.wasm"),
+          idleTimeout: 10_000,
+        });
+        module.defaultImports = ctx.importsUrl;
+        const stats = await trackWorkers(async () => {
+          assert.equal(await module.api().fibonacci(5), 8);
+          assert.equal(await module.api().fibonacci(5), 8);
+        });
+        assert.equal(stats.created, 2, `${stats.created} worker(s) started`);
+        assert.equal(stats.alive, 0, `${stats.alive} worker(s) left running`);
+      },
+    },
+    {
+      name: "idle workers end after idleTimeout",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({ source, idleTimeout: 50 });
+        const stats = await trackWorkers(async () => {
+          await module.api().add(1, 2);
+          await tick(300);
+        });
+        assert.equal(stats.alive, 0, `${stats.alive} worker(s) still idle`);
       },
     },
 
@@ -665,7 +745,6 @@ export function cases(ctx) {
     },
     {
       name: "concurrent tasks start a bounded number of workers",
-      known: "#3",
       async run() {
         const module = await probe();
         // #3: one less than the logical cores, so the caller keeps one.
@@ -696,7 +775,12 @@ export function cases(ctx) {
     },
     {
       name: "a burst of tasks does not stall the caller's event loop",
-      known: (ctx) => ctx.runtime.startsWith("deno") ? "#3" : undefined,
+      // Deno blocks the caller for ~17 ms while it starts each worker, so a
+      // burst that has to start the pool stalls there whatever Exu does.
+      skip: () =>
+        ctx.runtime.startsWith("deno")
+          ? "Deno blocks the caller while starting workers"
+          : false,
       async run() {
         const module = await probe();
         await tick(1000);
@@ -707,6 +791,24 @@ export function cases(ctx) {
           await tick(500); // include worker teardown
         });
         // RAIL: respond within 100 ms, even to a burst of 64 tasks.
+        assert.ok(stall < 100, `event loop stalled ${stall.toFixed(1)} ms`);
+      },
+    },
+    {
+      name: "a burst of tasks on started workers does not stall the caller",
+      async run() {
+        const module = new Module({
+          source: await ctx.bytes("probe.wasm"),
+          idleTimeout: 10_000,
+        });
+        const burst = () =>
+          Promise.all(
+            Array.from({ length: 64 }, () => module.api().burn(200_000, 1)),
+          );
+        await burst();
+        await tick(200);
+        const stall = await longestStall(burst);
+        // RAIL: respond within 100 ms.
         assert.ok(stall < 100, `event loop stalled ${stall.toFixed(1)} ms`);
       },
     },

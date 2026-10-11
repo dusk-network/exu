@@ -48,7 +48,12 @@
  */
 
 import { isExportName, MemoryProxy, NullTarget } from "./proxies.js";
+import { WorkerChannel } from "./sandbox/channel.js";
 import { Sandbox } from "./sandbox/mod.js";
+import { Pool } from "./sandbox/pool.js";
+
+const defaultWorkers = () =>
+  Math.max(1, (globalThis.navigator?.hardwareConcurrency ?? 2) - 1);
 
 /**
  * Settles like `promise`, but rejects with the abort reason as soon as
@@ -125,6 +130,9 @@ export class Module {
   #module;
   #importsUrl;
   #workerUrl;
+  #workers;
+  #idleTimeout;
+  #pools = new Map();
 
   /**
    * Creates a Module instance.
@@ -160,6 +168,16 @@ export class Module {
     } else {
       throw new TypeError("`workerUrl` must be a URL or a string");
     }
+
+    this.#workers = options?.workers ?? defaultWorkers();
+    if (!Number.isSafeInteger(this.#workers) || this.#workers < 1) {
+      throw new TypeError("`workers` must be a positive integer");
+    }
+
+    this.#idleTimeout = options?.idleTimeout ?? 0;
+    if (!(this.#idleTimeout >= 0 && this.#idleTimeout <= 2 ** 31 - 1)) {
+      throw new TypeError("`idleTimeout` must be between 0 and 2^31 - 1 ms");
+    }
   }
 
   /**
@@ -176,11 +194,34 @@ export class Module {
   }
 
   /**
-   * Creates a new {Sandbox} instance for the module.
+   * The workers running tasks with the given imports. Workers that loaded
+   * custom imports are never reused: the imports module is evaluated once per
+   * worker, so a second task would share its state.
+   *
+   * @param {string} [importsUrl] - The task's imports.
+   * @param {WebAssembly.Module} module - The compiled module.
+   * @returns {[Pool, boolean]} The pool and whether its workers are reusable.
+   */
+  #pool(importsUrl, module) {
+    let pool = this.#pools.get(importsUrl);
+    if (!pool) {
+      pool = new Pool({
+        create: () =>
+          new WorkerChannel({ module, importsUrl, workerUrl: this.#workerUrl }),
+        size: this.#workers,
+        idleTimeout: this.#idleTimeout,
+      });
+      this.#pools.set(importsUrl, pool);
+    }
+    return [pool, importsUrl === undefined];
+  }
+
+  /**
+   * Gives a task a worker from the pool and a fresh instance in it.
    *
    * @param {SandboxOptions} [options] - The options for the sandbox
    *
-   * @returns {Promise<Sandbox>} - The sandbox instance
+   * @returns {Promise<[Sandbox, () => void]>} - The sandbox and its release
    */
   async #createSandbox(options = {}) {
     const { signal, imports } = options;
@@ -190,17 +231,16 @@ export class Module {
     signal?.throwIfAborted();
 
     const importsUrl = ensureImportsValue(imports) ?? this.#importsUrl;
+    const [pool, reusable] = this.#pool(importsUrl, module);
+    const channel = await pool.acquire(signal);
+    const sandbox = new Sandbox({ channel, signal });
 
-    return new Sandbox({
-      module,
-      importsUrl,
-      signal,
-      workerUrl: this.#workerUrl,
-    });
+    return [sandbox, () => pool.release(channel, sandbox.release(reusable))];
   }
 
   /**
-   * Creates a task to run asynchronously in a newly created {Sandbox}.
+   * Creates a task to run asynchronously in a {Sandbox}: a fresh instance of
+   * the module in a pooled worker.
    *
    * @param {TaskCallback} fn - The function to run in the sandbox
    * @returns {Promise<function>} - An asynchronous function can be run with {SandboxOptions}
@@ -208,9 +248,9 @@ export class Module {
   task(fn) {
     return async (options = {}) => {
       const { signal } = options;
-      let sandbox;
+      let sandbox, release;
       try {
-        sandbox = await this.#createSandbox(options);
+        [sandbox, release] = await this.#createSandbox(options);
       } catch (error) {
         // Aborted meanwhile: the abort reason wins over, say, a compile error.
         signal?.throwIfAborted();
@@ -247,9 +287,17 @@ export class Module {
         throw error;
       } finally {
         signal?.removeEventListener("abort", abort);
-        sandbox.terminate();
+        release();
       }
     };
+  }
+
+  /**
+   * Ends the module's idle workers now. Tasks still running finish first;
+   * later tasks start new workers.
+   */
+  close() {
+    for (const pool of this.#pools.values()) pool.close();
   }
 
   /**

@@ -107,6 +107,28 @@ const task = module.task(async ({ malloc, free }, { memcpy }) => {
 });
 ```
 
+### Worker pool
+
+Tasks run in a pool of workers: at most `workers` at once (by default one less
+than the logical cores), with other tasks waiting their turn. Each task gets a
+fresh instance of the module. A worker that finished its task cleanly goes to
+the next waiting task; otherwise it ends.
+
+To also keep workers between tasks, set `idleTimeout`: a worker then waits that
+many milliseconds for another task before it ends. Workers whose task was
+aborted, that still had calls running, or that loaded custom imports are never
+reused.
+
+```javascript
+const module = new Module({ source, idleTimeout: 10_000 });
+// ...
+module.close(); // ends idle workers now
+```
+
+With an `idleTimeout`, call `close()` when done with the module: idle workers
+keep Deno processes alive until they time out, and resource sanitizers in tests
+report them.
+
 ### Workers and Content Security Policy
 
 In browsers, Exu starts each sandbox worker from `src/sandbox/worker-entry.js`,
