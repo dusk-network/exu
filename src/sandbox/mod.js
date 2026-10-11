@@ -4,7 +4,7 @@
 //
 // Copyright (c) DUSK NETWORK. All rights reserved.
 
-import { NullTarget } from "../proxies.js";
+import { isExportName, NullTarget } from "../proxies.js";
 import worker from "./worker.js";
 
 const isAddress = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -89,8 +89,10 @@ export class Sandbox {
    */
   get exports() {
     return new Proxy(NullTarget, {
-      get: (_, prop) => (...args) =>
-        this.send(this.#worker, { member: prop, args }),
+      get: (_, prop) =>
+        isExportName(prop)
+          ? (...args) => this.send(this.#worker, { member: prop, args })
+          : undefined,
     });
   }
 

@@ -19,7 +19,8 @@ Deno.test("module validates sources and default imports", () => {
   assert.throws(() => {
     module.defaultImports = 1;
   }, TypeError);
-  assert.throws(() => new Module({}), ReferenceError);
+  assert.throws(() => new Module({}), TypeError);
+  assert.throws(() => new Module(null), TypeError);
 });
 
 Deno.test("string sources run without imports or shared memory", async () => {
@@ -44,4 +45,14 @@ Deno.test("pre-aborted tasks preserve their abort reason", async () => {
     task({ signal: AbortSignal.abort(reason) }),
     (error) => error === reason,
   );
+});
+
+Deno.test("ArrayBuffers from another realm are accepted", async () => {
+  const { runInNewContext } = await import("node:vm");
+  const buffer = runInNewContext(
+    "new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]).buffer",
+  );
+  assert.ok(!(buffer instanceof ArrayBuffer));
+  const result = await new Module(buffer).task(() => 42)();
+  assert.equal(result, 42);
 });

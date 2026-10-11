@@ -32,7 +32,7 @@
 
 /**
  * @typedef {Object} ModuleOptions
- * @property {URL|string|Uint8Array} source - The source of the WebAssembly
+ * @property {URL|string|ArrayBuffer|ArrayBufferView} source - The source of the WebAssembly
  */
 
 /**
@@ -45,8 +45,53 @@
  * @typedef {Object.<string, *>} Options
  */
 
-import { MemoryProxy, NullTarget } from "./proxies.js";
+import { isExportName, MemoryProxy, NullTarget } from "./proxies.js";
 import { Sandbox } from "./sandbox/mod.js";
+
+/**
+ * Settles like `promise`, but rejects with the abort reason as soon as
+ * `signal` aborts.
+ * @private
+ *
+ * @param {Promise} promise - The work to wait for
+ * @param {AbortSignal} [signal] - Stops the wait
+ *
+ * @returns {Promise}
+ */
+const untilAborted = (promise, signal) => {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    // Handled first, so the work's own late failure is never unhandled.
+    promise.then(resolve, reject).finally(() =>
+      signal.removeEventListener("abort", abort)
+    );
+    if (signal.aborted) return abort();
+    signal.addEventListener("abort", abort, { once: true });
+  });
+};
+
+const arrayBufferLength = Object.getOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  "byteLength",
+).get;
+
+/**
+ * Whether `value` is an ArrayBuffer, from this realm or another (e.g. an
+ * iframe), where `instanceof` would say no.
+ * @private
+ *
+ * @param {*} value
+ * @returns {boolean}
+ */
+const isArrayBuffer = (value) => {
+  try {
+    arrayBufferLength.call(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Ensures at runtime the imports value is valid.
@@ -61,7 +106,7 @@ const ensureImportsValue = (value) => {
     return value.href;
   } else if (typeof value === "string") {
     return value;
-  } else if (typeof value === "undefined" || null) {
+  } else if (value === undefined) {
     return undefined;
   } else {
     throw new TypeError("imports can be only a URL, a string or undefined");
@@ -89,14 +134,20 @@ export class Module {
       this.#module = WebAssembly.compileStreaming(fetch(source.href));
     } else if (typeof source === "string") {
       this.#module = WebAssembly.compileStreaming(fetch(source));
-    } else if (
-      source instanceof Uint8Array ||
-      Object.getPrototypeOf(source) instanceof Uint8Array
-    ) {
+    } else if (isArrayBuffer(source)) {
       this.#module = WebAssembly.compile(source);
+    } else if (ArrayBuffer.isView(source)) {
+      // Engines differ on which views they compile (V8 refuses DataView).
+      this.#module = WebAssembly.compile(
+        new Uint8Array(source.buffer, source.byteOffset, source.byteLength),
+      );
     } else {
-      throw ReferenceError("`source` should be either a URL or a buffer");
+      throw new TypeError(
+        "`source` must be a URL, a string, an ArrayBuffer or an ArrayBuffer view",
+      );
     }
+    // Tasks surface compile failures; until one runs, they are not unhandled.
+    this.#module.catch(() => {});
   }
 
   /**
@@ -122,8 +173,8 @@ export class Module {
   async #createSandbox(options = {}) {
     const { signal, imports } = options;
 
-    signal?.throwIfAborted();
-    const module = await this.#module;
+    const module = await untilAborted(this.#module, signal);
+    // The abort may land between compilation settling and this line.
     signal?.throwIfAborted();
 
     const importsUrl = ensureImportsValue(imports) ?? this.#importsUrl;
@@ -139,18 +190,46 @@ export class Module {
    */
   task(fn) {
     return async (options = {}) => {
-      const sandbox = await this.#createSandbox(options);
+      const { signal } = options;
+      let sandbox;
+      try {
+        sandbox = await this.#createSandbox(options);
+      } catch (error) {
+        // Aborted meanwhile: the abort reason wins over, say, a compile error.
+        signal?.throwIfAborted();
+        throw error;
+      }
+      // Stop the worker on abort, even between requests to it.
+      const abort = () => sandbox.terminate(signal.reason);
+      signal?.addEventListener("abort", abort, { once: true });
 
       try {
-        const memory = await sandbox.memory;
-        const globals = await sandbox.globals;
+        // An abort rejects the task at once, even while the callback waits on
+        // something else; whatever it still runs then meets the dead sandbox.
+        const result = await untilAborted(
+          (async () => {
+            const memory = await sandbox.memory;
+            const globals = await sandbox.globals;
+            // A task aborted while it started never runs its callback.
+            signal?.throwIfAborted();
 
-        return await fn(sandbox.exports, {
-          memory: memory ?? MemoryProxy,
-          memcpy: sandbox.memcpy,
-          globals,
-        });
+            return await fn(sandbox.exports, {
+              memory: memory ?? MemoryProxy,
+              memcpy: sandbox.memcpy,
+              globals,
+            });
+          })(),
+          signal,
+        );
+        signal?.throwIfAborted();
+        return result;
+      } catch (error) {
+        // An aborted task rejects with the abort reason, however the callback
+        // handled the failed request.
+        signal?.throwIfAborted();
+        throw error;
       } finally {
+        signal?.removeEventListener("abort", abort);
         sandbox.terminate();
       }
     };
@@ -167,7 +246,9 @@ export class Module {
    */
   api = (options = {}) =>
     new Proxy(NullTarget, {
-      get: (_, prop) => (...args) =>
-        this.task((exports) => exports[prop](...args))(options),
+      get: (_, prop) =>
+        isExportName(prop)
+          ? (...args) => this.task((exports) => exports[prop](...args))(options)
+          : undefined,
     });
 }
