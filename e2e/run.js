@@ -29,6 +29,15 @@ export async function runAll(ctx, { log = console.log, only } = {}) {
       opened.add(this);
     }
   };
+  // One task first, so one-time set-up (browsers probe Exu's worker file)
+  // does not show up in the first case's worker counts.
+  try {
+    const warmup = new ctx.Module(await ctx.bytes("probe.wasm"));
+    await warmup.api().add(1, 2);
+    warmup.close?.();
+  } catch {
+    // the cases will report it
+  }
   for (const c of cases({ ...ctx, Module })) {
     if (only && !only.some((o) => c.name.includes(o))) continue;
     const skip = typeof c.skip === "function" ? c.skip() : c.skip;

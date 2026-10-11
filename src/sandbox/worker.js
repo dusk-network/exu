@@ -6,7 +6,9 @@
 
 // The sandbox worker. A host may reuse one worker for several tasks: `init`
 // hands over the compiled module once, then each task `begin`s with a fresh
-// instance, `call`s its exports and `end`s, which drops the instance.
+// instance and its own memory port, `call`s its exports and `end`s, which
+// drops both. An idle worker counts down `idleTimeout` itself and then asks
+// the host to end it, so an idle host holds neither ports nor timers.
 export default function () {
   // Version of the messages with the host; keep in step with `PROTOCOL` in
   // ./channel.js.
@@ -15,6 +17,8 @@ export default function () {
   const state = {
     module: null,
     importsUrl: undefined,
+    idleTimeout: 0,
+    idleTimer: undefined,
     instance: null,
     imports: null,
     memoryPort: null,
@@ -114,7 +118,21 @@ export default function () {
     }
   }
 
+  function rest() {
+    state.instance = null;
+    state.imports = null;
+    state.memoryPort?.close();
+    state.memoryPort = null;
+    if (state.idleTimeout > 0) {
+      state.idleTimer = setTimeout(
+        () => postMessage({ type: "expire" }),
+        state.idleTimeout,
+      );
+    }
+  }
+
   addEventListener("message", async ({ data, ports }) => {
+    clearTimeout(state.idleTimer);
     try {
       switch (data?.type) {
         case "init":
@@ -125,19 +143,19 @@ export default function () {
           }
           state.module = data.module;
           state.importsUrl = data.importsUrl;
-          state.memoryPort = ports[0];
-          state.memoryPort.onmessage = handleMemoryRequest;
+          state.idleTimeout = data.idleTimeout ?? 0;
           postMessage(success({ protocol: PROTOCOL }));
           break;
         case "begin":
+          state.memoryPort = ports[0];
+          state.memoryPort.onmessage = handleMemoryRequest;
           postMessage(success(await begin()));
           break;
         case "call":
           postMessage(success(call(data)));
           break;
         case "end":
-          state.instance = null;
-          state.imports = null;
+          rest();
           postMessage(success(undefined));
           break;
         default:

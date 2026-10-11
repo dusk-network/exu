@@ -14,8 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Run tasks in a bounded pool of workers, each task in a fresh instance, and
-  hand a finished worker to the next waiting task. [#3]
+- Run tasks in a bounded pool of reused workers, each task in a fresh instance.
+  [#3]
 - Start sandbox workers in browsers from `src/sandbox/worker-entry.js` when it
   loads, so bundlers emit it and `worker-src 'self'` pages can run tasks. [#18]
 - Reject tasks with an "Incompatible Exu sandbox worker" error when the worker

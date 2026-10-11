@@ -133,6 +133,7 @@ export class Module {
   #workers;
   #idleTimeout;
   #pools = new Map();
+  #generation = 0;
 
   /**
    * Creates a Module instance.
@@ -174,7 +175,7 @@ export class Module {
       throw new TypeError("`workers` must be a positive integer");
     }
 
-    this.#idleTimeout = options?.idleTimeout ?? 0;
+    this.#idleTimeout = options?.idleTimeout ?? 10_000;
     if (!(this.#idleTimeout >= 0 && this.#idleTimeout <= 2 ** 31 - 1)) {
       throw new TypeError("`idleTimeout` must be between 0 and 2^31 - 1 ms");
     }
@@ -207,13 +208,25 @@ export class Module {
     if (!pool) {
       pool = new Pool({
         create: () =>
-          new WorkerChannel({ module, importsUrl, workerUrl: this.#workerUrl }),
+          new WorkerChannel({
+            module,
+            importsUrl,
+            workerUrl: this.#workerUrl,
+            idleTimeout: this.#idleTimeout,
+          }),
         size: this.#workers,
-        idleTimeout: this.#idleTimeout,
+        reuse: importsUrl === undefined && this.#idleTimeout > 0,
       });
       this.#pools.set(importsUrl, pool);
     }
     return [pool, importsUrl === undefined];
+  }
+
+  /** Forgets an empty pool, unless a newer one took its place meanwhile. */
+  #dropIfEmpty(importsUrl, pool) {
+    if (pool.empty && this.#pools.get(importsUrl) === pool) {
+      this.#pools.delete(importsUrl);
+    }
   }
 
   /**
@@ -225,6 +238,8 @@ export class Module {
    */
   async #createSandbox(options = {}) {
     const { signal, imports } = options;
+    // Tasks started before a `close()` do not hand their worker back for reuse.
+    const generation = this.#generation;
 
     const module = await untilAborted(this.#module, signal);
     // The abort may land between compilation settling and this line.
@@ -232,10 +247,23 @@ export class Module {
 
     const importsUrl = ensureImportsValue(imports) ?? this.#importsUrl;
     const [pool, reusable] = this.#pool(importsUrl, module);
-    const channel = await pool.acquire(signal);
+    let channel;
+    try {
+      channel = await pool.acquire(signal);
+    } catch (error) {
+      // Aborted before it got a worker: do not keep an empty imports pool.
+      if (!reusable) this.#dropIfEmpty(importsUrl, pool);
+      throw error;
+    }
     const sandbox = new Sandbox({ channel, signal });
 
-    return [sandbox, () => pool.release(channel, sandbox.release(reusable))];
+    const release = () => {
+      const reuse = reusable && generation === this.#generation;
+      pool.release(channel, sandbox.release(reuse));
+      // Pools for custom imports keep no idle workers: drop them when done.
+      if (!reusable) this.#dropIfEmpty(importsUrl, pool);
+    };
+    return [sandbox, release];
   }
 
   /**
@@ -293,11 +321,16 @@ export class Module {
   }
 
   /**
-   * Ends the module's idle workers now. Tasks still running finish first;
-   * later tasks start new workers.
+   * Ends the module's idle workers now. Tasks already started (running,
+   * waiting for a worker or still compiling) finish first and end their
+   * workers; later tasks start new workers.
    */
   close() {
-    for (const pool of this.#pools.values()) pool.close();
+    this.#generation++;
+    for (const [importsUrl, pool] of this.#pools) {
+      pool.close();
+      this.#dropIfEmpty(importsUrl, pool);
+    }
   }
 
   /**

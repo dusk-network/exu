@@ -12,6 +12,9 @@ import { spawnWorker } from "./spawn.js";
  */
 export const PROTOCOL = 2;
 
+/** How long a worker may take to start and accept the module, in ms. */
+const START_TIMEOUT = 30_000;
+
 const errorTypes = {
   CompileError: WebAssembly.CompileError,
   LinkError: WebAssembly.LinkError,
@@ -40,15 +43,19 @@ const responseError = (details) => {
 };
 
 /**
- * One sandbox worker thread and its memory port. Requests are serialized: one
- * is in flight at a time, the rest queue behind it. The channel outlives
+ * One sandbox worker thread. Requests are serialized: one is in flight at a
+ * time, the rest queue behind it. Each task gets its own memory port, closed
+ * when the task ends, so an idle channel holds no port. The channel outlives
  * tasks when pooled; `kill()` ends it for good.
  */
 export class WorkerChannel {
   #worker;
-  #port;
+  #port = null;
+  #fail;
   #pending = Promise.resolve();
   #queued = 0;
+  #idleSince;
+  #startTimeout;
   #reject = null;
   #signal;
   #dead = false;
@@ -57,16 +64,27 @@ export class WorkerChannel {
   /** Settles once the worker accepted the module and protocol. */
   ready;
 
+  /** Called when the idle worker's `idleTimeout` ran out. */
+  onexpire = null;
+
   /**
    * @param {Object} config
    * @param {WebAssembly.Module} config.module - The compiled module.
    * @param {string} [config.importsUrl] - The module's imports, if any.
    * @param {URL|string} [config.workerUrl] - The worker to start.
+   * @param {number} [config.idleTimeout] - How long the worker waits for
+   *   another task before it reports `onexpire`, in ms; 0 never.
+   * @param {number} [config.startTimeout] - How long the worker may take to
+   *   start, in ms.
    */
-  constructor({ module, importsUrl, workerUrl }) {
-    const mc = new MessageChannel();
-    this.#port = mc.port1;
-
+  constructor({
+    module,
+    importsUrl,
+    workerUrl,
+    idleTimeout = 0,
+    startTimeout = START_TIMEOUT,
+  }) {
+    this.#startTimeout = startTimeout;
     const fail = (event) => {
       if (this.#dead) return;
       event.preventDefault();
@@ -76,7 +94,7 @@ export class WorkerChannel {
           : new Error(event.message || "Sandbox worker failed"),
       );
     };
-    this.#port.addEventListener("messageerror", fail);
+    this.#fail = fail;
 
     // Requests queue behind the worker's start; a failed start kills the
     // channel with that error.
@@ -88,18 +106,35 @@ export class WorkerChannel {
       this.#worker = worker;
       worker.addEventListener("error", fail);
       worker.addEventListener("messageerror", fail);
+      worker.addEventListener("message", ({ data }) => {
+        if (data?.type === "expire" && !this.#dead) this.onexpire?.();
+      });
     }).catch((error) => this.kill(error));
 
-    this.ready = this.request(
-      { type: "init", protocol: PROTOCOL, module, importsUrl },
-      [mc.port2],
-    ).then((initialized) => {
+    this.ready = this.request({
+      type: "init",
+      protocol: PROTOCOL,
+      module,
+      importsUrl,
+      idleTimeout,
+    }).then((initialized) => {
       if (initialized?.protocol !== PROTOCOL) {
         throw incompatibleWorker(initialized?.protocol);
       }
     });
     // Surfaced through the first task's `begin`.
     this.ready.catch(() => {});
+
+    // A worker whose download stalls would leave its task pending for good.
+    const timer = setTimeout(
+      () =>
+        this.kill(
+          new Error(`Sandbox worker did not start within ${startTimeout} ms`),
+        ),
+      startTimeout,
+    );
+    const stop = () => clearTimeout(timer);
+    this.ready.then(stop, stop);
   }
 
   /** Whether the channel was killed. */
@@ -112,6 +147,11 @@ export class WorkerChannel {
     return this.#queued === 0;
   }
 
+  /** When the last request settled, while none is queued or in flight. */
+  get idleSince() {
+    return this.#idleSince;
+  }
+
   /** The abort signal of the task using the channel, if any. */
   set signal(signal) {
     this.#signal = signal;
@@ -122,13 +162,51 @@ export class WorkerChannel {
     return this.#enqueue(() => this.#worker, message, transfer);
   }
 
-  /** Sends a message to the worker's memory port. */
+  /** Starts a task: a fresh instance and its own memory port. */
+  begin() {
+    const mc = new MessageChannel();
+    this.#port = mc.port1;
+    this.#port.addEventListener("messageerror", this.#fail);
+    const begun = this.request({ type: "begin" }, [mc.port2]);
+    // Aborted before it was sent, `port2` was never transferred: close it.
+    begun.catch(() => mc.port2.close());
+    // Instantiation, custom imports and their `oninit` must not hang either.
+    const timer = setTimeout(
+      () =>
+        this.kill(
+          new Error(
+            `Sandbox instance did not start within ${this.#startTimeout} ms`,
+          ),
+        ),
+      this.#startTimeout,
+    );
+    const stop = () => clearTimeout(timer);
+    begun.then(stop, stop);
+    return begun;
+  }
+
+  /** Ends the task: drops its instance and closes its memory port. */
+  end() {
+    const ended = this.request({ type: "end" });
+    this.#closePort();
+    return ended;
+  }
+
+  /** Sends a message to the current task's memory port. */
   memory(message, transfer = []) {
+    if (!this.#port) {
+      return Promise.reject(new Error("No task is running in this worker"));
+    }
     return this.#enqueue(this.#port, message, transfer);
   }
 
+  #closePort() {
+    this.#port?.close();
+    this.#port = null;
+  }
+
   #enqueue(receiver, message, transfer) {
-    this.#queued++;
+    if (this.#queued++ === 0) this.#idleSince = undefined;
     const request = this.#pending.then(() => {
       if (this.#dead) throw this.#failure;
       return this.#send(
@@ -137,7 +215,9 @@ export class WorkerChannel {
         transfer,
       );
     });
-    const done = () => this.#queued--;
+    const done = () => {
+      if (--this.#queued === 0) this.#idleSince = performance.now();
+    };
     this.#pending = request.then(done, done);
     return request;
   }
@@ -167,6 +247,8 @@ export class WorkerChannel {
 
       signal?.addEventListener("abort", abort, { once: true });
       receiver.onmessage = ({ data }) => {
+        // Idle-expiry notices are not replies.
+        if (data?.type === "expire") return;
         if (data?.ok === true) {
           finish(resolve, data.value);
         } else if (data?.ok === false) {
@@ -203,7 +285,7 @@ export class WorkerChannel {
     this.#dead = true;
     this.#failure = reason;
     this.#reject?.(reason);
-    this.#port.close();
+    this.#closePort();
     this.#worker?.terminate();
   }
 }

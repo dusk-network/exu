@@ -114,3 +114,26 @@ Deno.test("sandbox remains usable after handled memory errors", async () => {
   assert.deepEqual(source, new Uint8Array([1]));
   assert.equal(result, 8);
 });
+
+Deno.test("a standalone sandbox accepts calls right away", async () => {
+  const module = await WebAssembly.compile(TRAP_MODULE);
+  const sandbox = new Sandbox({ module });
+  try {
+    assert.equal(await sandbox.exports.ok(), 42);
+  } finally {
+    sandbox.terminate();
+  }
+});
+
+Deno.test("a standalone sandbox ended at once raises nothing unhandled", async () => {
+  const module = await WebAssembly.compile(TRAP_MODULE);
+  new Sandbox({ module }).terminate();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+});
+
+Deno.test("an instance whose imports never finish starting rejects", async () => {
+  const module = await WebAssembly.compile(TRAP_MODULE);
+  const importsUrl = new URL("./hanging-imports.js", import.meta.url).href;
+  const sandbox = new Sandbox({ module, importsUrl, startTimeout: 100 });
+  await assert.rejects(sandbox.globals, /did not start within 100 ms/);
+});

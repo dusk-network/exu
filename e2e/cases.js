@@ -453,9 +453,12 @@ export function cases(ctx) {
       },
     },
     {
-      name: "by default a worker ends with its task",
+      name: "with idleTimeout 0 a worker ends with its task",
       async run() {
-        const module = await probe();
+        const module = new Module({
+          source: await ctx.bytes("probe.wasm"),
+          idleTimeout: 0,
+        });
         await module.api().add(1, 2); // browsers probe the worker file first
         const stats = await trackWorkers(async () => {
           assert.equal(await module.api().add(1, 2), 3);
@@ -466,12 +469,9 @@ export function cases(ctx) {
       },
     },
     {
-      name: "a healthy worker serves the next task",
+      name: "by default a healthy worker serves the next task",
       async run() {
-        const module = new Module({
-          source: await ctx.bytes("probe.wasm"),
-          idleTimeout: 10_000,
-        });
+        const module = await probe();
         const stats = await trackWorkers(async () => {
           await module.api().add(1, 2);
           await module.api().trap().catch(() => {});
@@ -540,6 +540,21 @@ export function cases(ctx) {
         });
         assert.equal(stats.created, 2, `${stats.created} worker(s) started`);
         assert.equal(stats.alive, 0, `${stats.alive} worker(s) left running`);
+      },
+    },
+    {
+      name: "a worker that fails to start does not strand the pool",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({
+          source,
+          workers: 1,
+          workerUrl: "http://[",
+        });
+        for (let i = 0; i < 2; i++) {
+          const error = await assert.rejects(module.api().add(1, 2), {}, 2000);
+          assert.ok(!/pending/.test(error.message), error.message);
+        }
       },
     },
     {
@@ -759,6 +774,74 @@ export function cases(ctx) {
           stats.maxAlive <= limit,
           `${stats.maxAlive} workers alive at once (limit ${limit})`,
         );
+      },
+    },
+    {
+      name: "a task can wait on another task with every worker taken",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({ source, workers: 1 });
+        const result = await assert.within(
+          module.task(async ({ add }) =>
+            await add(1, 2) + await module.api().add(3, 4)
+          )(),
+          3000,
+          "nested task",
+        );
+        assert.equal(result, 10);
+      },
+    },
+    {
+      name: "the bound holds while workers compute",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({ source, workers: 2 });
+        const stats = await trackWorkers(() =>
+          Promise.all(
+            Array.from({ length: 6 }, () => module.api().burn(150_000_000, 1)),
+          )
+        );
+        assert.ok(
+          stats.maxAlive <= 2,
+          `${stats.maxAlive} workers alive at once (bound 2)`,
+        );
+      },
+    },
+    {
+      name: "an extra worker ends once the stall that needed it is over",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({ source, workers: 1 });
+        const goA = Promise.withResolvers();
+        const goB = Promise.withResolvers();
+        await trackWorkers(async (stats) => {
+          // A takes the only worker and waits: the pool is stalled.
+          const a = module.task(async ({ burn }) => {
+            await goA.promise;
+            return burn(300_000_000, 1);
+          })();
+          await tick(20);
+          // B gets an extra worker once A has been waiting ~100 ms.
+          const b = module.task(async ({ add }) => {
+            await goB.promise;
+            return add(1, 2);
+          })();
+          await tick(250);
+          const queued = Array.from(
+            { length: 4 },
+            () => module.api().burn(10_000_000, 1),
+          );
+          goA.resolve(); // A computes now: the pool is no longer stalled
+          await tick(30);
+          goB.resolve();
+          assert.equal(await b, 3);
+          assert.equal(
+            stats.alive,
+            1,
+            "B's extra worker went on serving queued tasks",
+          );
+          await Promise.all([a, ...queued]);
+        });
       },
     },
     {

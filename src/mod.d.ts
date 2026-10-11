@@ -46,8 +46,8 @@ export interface ModuleOptions {
   /** Most workers running tasks at once; one less than the cores by default. */
   workers?: number;
   /**
-   * How long a worker waits for another task before it ends, in ms. `0`, the
-   * default, ends a worker with its task unless a task is already waiting.
+   * How long a worker waits for another task before it ends, in ms (10 000 by
+   * default). `0` ends a worker with its task unless a task is already waiting.
    */
   idleTimeout?: number;
 }

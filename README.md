@@ -111,23 +111,27 @@ const task = module.task(async ({ malloc, free }, { memcpy }) => {
 
 Tasks run in a pool of workers: at most `workers` at once (by default one less
 than the logical cores), with other tasks waiting their turn. Each task gets a
-fresh instance of the module. A worker that finished its task cleanly goes to
-the next waiting task; otherwise it ends.
-
-To also keep workers between tasks, set `idleTimeout`: a worker then waits that
-many milliseconds for another task before it ends. Workers whose task was
-aborted, that still had calls running, or that loaded custom imports are never
-reused.
+fresh instance of the module. A worker that finished its task cleanly serves
+the next one, and ends after `idleTimeout` ms without work (10 seconds by
+default; `0` ends it as soon as its task does, unless a task is waiting).
+Workers whose task was aborted, that still had calls running, or that loaded
+custom imports are never reused.
 
 ```javascript
-const module = new Module({ source, idleTimeout: 10_000 });
+const module = new Module({ source, workers: 4, idleTimeout: 30_000 });
 // ...
 module.close(); // ends idle workers now
 ```
 
-With an `idleTimeout`, call `close()` when done with the module: idle workers
-keep Deno processes alive until they time out, and resource sanitizers in tests
-report them.
+Idle workers hold no ports or timers on the caller's side; each one counts
+down its own idle time. In Deno, though, an idle worker keeps the process
+alive until it times out: call `close()` when a script is done with a module.
+
+A task may wait on another task of the same module. When every worker is
+taken and has run no call for 100 ms (each task is waiting on something else),
+the next waiting task gets an extra worker, which ends with its task. So
+nested tasks cannot deadlock the pool; they may wait up to about 100 ms. While
+workers are busy with calls, the `workers` bound holds.
 
 ### Workers and Content Security Policy
 

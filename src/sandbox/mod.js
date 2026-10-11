@@ -30,14 +30,21 @@ export class Sandbox {
    * @param {string} [config.importsUrl] - The URL for the module's imports.
    * @param {AbortSignal} [config.signal] - An optional AbortSignal to cancel operations.
    * @param {URL|string} [config.workerUrl] - The worker module to start (see {@link spawnWorker}).
+   * @param {number} [config.startTimeout] - How long the worker may take to
+   *   start, in ms.
    */
-  constructor({ channel, module, importsUrl, signal, workerUrl }) {
+  constructor(
+    { channel, module, importsUrl, signal, workerUrl, startTimeout },
+  ) {
     this.#channel = channel ??
-      new WorkerChannel({ module, importsUrl, workerUrl });
+      new WorkerChannel({ module, importsUrl, workerUrl, startTimeout });
     this.#channel.signal = signal;
     this.#begun = this.#channel.ready.then(() =>
-      this.#send("request", { type: "begin" })
+      this.#ended ? Promise.reject(this.#failure) : this.#channel.begin()
     );
+    // Surfaced through the task's requests; a sandbox ended before any must
+    // not raise an unhandled rejection.
+    this.#begun.catch(() => {});
   }
 
   /**
@@ -133,7 +140,11 @@ export class Sandbox {
 
   #send(kind, message, transfer) {
     if (this.#ended) return Promise.reject(this.#failure);
-    return this.#channel[kind](message, transfer);
+    // Requests follow the task's `begin`, even when sent right away.
+    return this.#begun.then(() => {
+      if (this.#ended) throw this.#failure;
+      return this.#channel[kind](message, transfer);
+    });
   }
 
   /**
@@ -162,7 +173,7 @@ export class Sandbox {
       channel.kill(this.#failure);
       return false;
     }
-    channel.request({ type: "end" }).catch((error) => channel.kill(error));
+    channel.end().catch((error) => channel.kill(error));
     return true;
   }
 
