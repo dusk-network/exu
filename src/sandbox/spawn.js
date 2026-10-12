@@ -4,7 +4,7 @@
 //
 // Copyright (c) DUSK NETWORK. All rights reserved.
 
-import { needsNodeWorker, NodeWorker } from "./node.js";
+import { isNode, startNodeWorker } from "./node.js";
 import worker from "./worker.js";
 
 let blobUrl;
@@ -100,8 +100,8 @@ function probeFileWorker() {
  * @returns {Promise<Worker>}
  */
 export async function spawnWorker(workerUrl) {
-  if (needsNodeWorker()) {
-    return new NodeWorker(workerUrl);
+  if (isNode()) {
+    return startNodeWorker(workerUrl);
   }
   if (workerUrl !== undefined) {
     return new Worker(workerUrl, { type: "module" });

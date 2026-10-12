@@ -13,7 +13,11 @@ import worker from "./worker.js";
 /**
  * Runs first in the thread: the Web Worker globals a sandbox worker uses
  * (`self`, `onmessage`, `addEventListener`, `postMessage`) over `parentPort`.
- * The host sends `{ data, ports }`, see {@link NodeWorker#postMessage}.
+ * The host sends `{ data, ports }`, see {@link NodeWorker#postMessage}. As in
+ * a Web Worker, messages wait until the worker's code has run: the returned
+ * function delivers them.
+ *
+ * @returns {() => void}
  */
 function webWorkerGlobals() {
   const { parentPort } = globalThis.process.getBuiltinModule(
@@ -37,33 +41,66 @@ function webWorkerGlobals() {
   globalThis.postMessage = (data, transfer) =>
     parentPort.postMessage(data, transfer);
 
-  parentPort.on("message", ({ data, ports }) => {
-    const event = { data, ports };
+  const deliver = (event) => {
     onmessage?.(event);
     for (const listener of listeners) listener(event);
+  };
+  let queued = [];
+  parentPort.on("message", ({ data, ports }) => {
+    if (queued) queued.push({ data, ports });
+    else deliver({ data, ports });
   });
+  return () => {
+    const events = queued;
+    queued = null;
+    events.forEach(deliver);
+  };
 }
 
 /**
- * Whether sandbox workers must run on `node:worker_threads`: there are no Web
- * Workers here (Node), but Node's built-in modules are.
+ * Whether this is Node: no Web Workers, so sandbox workers run on
+ * `node:worker_threads`, but Node's built-in modules.
  *
  * @returns {boolean}
  */
-export const needsNodeWorker = () =>
+export const isNode = () =>
   typeof globalThis.Worker === "undefined" &&
   typeof globalThis.process?.getBuiltinModule === "function";
 
+// Starting a thread blocks the caller for a millisecond or two (the first one
+// in a process for tens), so a burst on a cold pool starts its threads one per
+// turn of the event loop rather than all in one.
+let starting = Promise.resolve();
+const nextTurn = () =>
+  new Promise((resolve) => globalThis.setImmediate(resolve));
+
 /**
- * The code a thread runs: Exu's worker, or the worker module at `href`.
+ * Starts a {@link NodeWorker} on a later turn of the event loop, after any
+ * started before it.
+ *
+ * @param {URL|string} [workerUrl]
+ * @returns {Promise<NodeWorker>}
+ */
+export function startNodeWorker(workerUrl) {
+  const started = starting.then(nextTurn).then(() => new NodeWorker(workerUrl));
+  starting = started.catch(() => {});
+  return started;
+}
+
+/**
+ * The code a thread runs: Exu's worker, or the worker module at `href`. A
+ * module that fails to load is rethrown as an uncaught exception, so the
+ * thread fails whatever Node's unhandled-rejection policy.
  *
  * @param {string} [href]
  * @returns {string}
  */
 const threadSource = (href) =>
   href === undefined
-    ? `(${webWorkerGlobals})();\n(${worker})();`
-    : `(${webWorkerGlobals})();\nimport(${JSON.stringify(href)});`;
+    ? `const start = (${webWorkerGlobals})();\n(${worker})();\nstart();`
+    : `const start = (${webWorkerGlobals})();\nimport(${
+      JSON.stringify(href)
+    }).then(start, (error) => process.nextTick(() => { throw error; }));`;
 
 /**
  * A sandbox worker on a `node:worker_threads` thread that behaves like a Web

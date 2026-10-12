@@ -671,6 +671,33 @@ export function cases(ctx) {
       },
     },
     {
+      name: "a workerUrl that loads slowly still gets its first messages",
+      // Browsers and Deno drop messages that arrive while a module worker is
+      // still awaiting at top level (and Bun 1.3.9 can crash on such a
+      // worker); Node's threads hold them until it has loaded.
+      skip: () => ctx.runtime.startsWith("node ") ? false : "Node threads only",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({
+          source,
+          workerUrl: ctx.url("slow-worker.js"),
+        });
+        assert.equal(await module.api().add(1, 2), 3);
+      },
+    },
+    {
+      name: "a workerUrl that fails to load rejects its task promptly",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({
+          source,
+          workerUrl: ctx.url("broken-worker.js"),
+        });
+        // Within assert.rejects' 5 s, not the 30 s start timeout.
+        await assert.rejects(module.api().add(1, 2));
+      },
+    },
+    {
       name: "a worker from another Exu version fails clearly",
       async run() {
         const source = await ctx.bytes("probe.wasm");

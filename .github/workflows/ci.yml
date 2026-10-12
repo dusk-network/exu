@@ -22,3 +22,6 @@ jobs:
         with:
           node-version: 24
       - run: node e2e/node.js
+      # Threads inherit Node's unhandled-rejection policy; a worker module that
+      # fails to load must fail its task under each.
+      - run: node --unhandled-rejections=warn e2e/node.js "fails to load"

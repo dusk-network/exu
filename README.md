@@ -154,7 +154,9 @@ const module = new Module({ source, workerUrl });
 ```
 
 The worker must come from the same Exu version. A mismatched worker rejects
-tasks with an "Incompatible Exu sandbox worker" error.
+tasks with an "Incompatible Exu sandbox worker" error. It must also listen for
+messages as soon as it loads, before any top-level `await`: browsers and Deno
+drop messages that arrive earlier.
 
 ### Node
 

@@ -50,6 +50,7 @@
 import { isExportName, MemoryProxy, NullTarget } from "./proxies.js";
 import { WorkerChannel } from "./sandbox/channel.js";
 import { Sandbox } from "./sandbox/mod.js";
+import { isNode } from "./sandbox/node.js";
 import { Pool } from "./sandbox/pool.js";
 
 const defaultWorkers = () =>
@@ -120,19 +121,19 @@ const hrefOf = (value) => {
 
 /**
  * Compiles the module at `href`. Node's `fetch` cannot read `file:` URLs, so
- * where Node's modules are available those are read from disk.
+ * on Node those are read from disk.
  * @private
  *
  * @param {string} href
  * @returns {Promise<WebAssembly.Module>}
  */
 const compileUrl = (href) => {
-  const fs = href.startsWith("file:")
-    ? globalThis.process?.getBuiltinModule?.("node:fs/promises")
-    : undefined;
-  return fs
-    ? fs.readFile(new URL(href)).then((bytes) => WebAssembly.compile(bytes))
-    : WebAssembly.compileStreaming(fetch(href));
+  if (href.startsWith("file:") && isNode()) {
+    return globalThis.process.getBuiltinModule("node:fs/promises")
+      .readFile(new URL(href))
+      .then((bytes) => WebAssembly.compile(bytes));
+  }
+  return WebAssembly.compileStreaming(fetch(href));
 };
 
 /**
