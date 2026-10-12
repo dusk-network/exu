@@ -23,9 +23,11 @@ function webWorkerGlobals() {
   const { parentPort } = globalThis.process.getBuiltinModule(
     "node:worker_threads",
   );
-  // Listeners in registration order. As with a Web Worker's event handler,
-  // `onmessage` takes its place when first set and keeps it until cleared.
-  const listeners = new Set();
+  // A real EventTarget gives listeners a Web Worker's rules: registration
+  // order, `once`, removal during dispatch, errors reported as uncaught. As a
+  // Web Worker's event handler, `onmessage` takes its place among them when
+  // first set and keeps it until cleared.
+  const target = new EventTarget();
   let onmessage = null;
   const onmessageListener = (event) => onmessage?.call(globalThis, event);
 
@@ -34,28 +36,22 @@ function webWorkerGlobals() {
     get: () => onmessage,
     set: (handler) => {
       const next = typeof handler === "function" ? handler : null;
-      if (next && !onmessage) listeners.add(onmessageListener);
-      if (!next) listeners.delete(onmessageListener);
+      if (next && !onmessage) {
+        target.addEventListener("message", onmessageListener);
+      }
+      if (!next) target.removeEventListener("message", onmessageListener);
       onmessage = next;
     },
     configurable: true,
   });
-  globalThis.addEventListener = (type, listener) => {
-    if (type === "message") listeners.add(listener);
-  };
-  globalThis.removeEventListener = (type, listener) => {
-    if (type === "message") listeners.delete(listener);
-  };
+  globalThis.addEventListener = (...args) => target.addEventListener(...args);
+  globalThis.removeEventListener = (...args) =>
+    target.removeEventListener(...args);
   globalThis.postMessage = (data, transfer) =>
     parentPort.postMessage(data, transfer);
 
-  // Listeners added while an event is delivered wait for the next one.
-  const deliver = (event) => {
-    for (const listener of [...listeners]) {
-      if (typeof listener === "function") listener.call(globalThis, event);
-      else listener.handleEvent(event);
-    }
-  };
+  const deliver = ({ data, ports }) =>
+    target.dispatchEvent(new MessageEvent("message", { data, ports }));
   let queued = [];
   parentPort.on("message", ({ data, ports }) => {
     if (queued) queued.push({ data, ports });

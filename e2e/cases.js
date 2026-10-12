@@ -721,6 +721,17 @@ export function cases(ctx) {
       },
     },
     {
+      name: "a worker's message listeners follow EventTarget's rules",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({
+          source,
+          workerUrl: ctx.url("listeners-worker.js"),
+        });
+        assert.equal(await module.api().add(1, 2), 3);
+      },
+    },
+    {
       name: "tasks aborted while their threads wait to start start none",
       skip: () => ctx.runtime.startsWith("node ") ? false : "Node threads only",
       async run() {
