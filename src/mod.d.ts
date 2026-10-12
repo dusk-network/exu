@@ -63,11 +63,12 @@ export interface SandboxOptions {
 }
 
 /**
- * Callable proxy over the WebAssembly module exports.
+ * Callable proxy over the WebAssembly module exports. It has no `then`, so
+ * awaiting it gives the proxy itself.
  */
-export interface ModuleApi {
-  [name: string]: (...args: unknown[]) => Promise<unknown>;
-}
+export type ModuleApi =
+  & { [name: string]: (...args: unknown[]) => Promise<unknown> }
+  & { then?: never };
 
 /**
  * WebAssembly module wrapper that runs each task in an isolated worker sandbox.

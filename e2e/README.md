@@ -13,8 +13,9 @@ cd e2e && npm install && node browsers.mjs   # Chromium, Firefox, WebKit
 
 Pass case names (or parts of them) to run a subset.
 
-`browsers.mjs` runs the suite twice per engine: cross-origin isolated, and under
-a browser-extension CSP (`worker-src 'self'`).
+`browsers.mjs` runs the suite twice per engine: cross-origin isolated, and as in
+a browser extension, under its CSP (no Blob workers) and not cross-origin
+isolated.
 
 Cases marked `known` reproduce an open issue. They are reported as `KNOWN` while
 they fail and as `FIXED` once they pass, which fails the run until the mark is

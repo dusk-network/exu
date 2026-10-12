@@ -21,11 +21,11 @@ const blobWorker = () => {
 };
 
 // Server runtimes have no CSP to satisfy, and Deno would need read permission
-// for the worker file.
+// for the worker file. A `process` global proves nothing: Electron pages and
+// some bundles have one, and Node has no Web Workers at all.
 const isServerRuntime = () =>
   typeof globalThis.Deno !== "undefined" ||
-  typeof globalThis.Bun !== "undefined" ||
-  typeof globalThis.process?.versions?.node === "string";
+  typeof globalThis.Bun !== "undefined";
 
 /** How long the probe waits for the worker file to start, in ms. */
 const PROBE_TIMEOUT = 5000;

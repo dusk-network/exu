@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reject aborted tasks with the abort reason at once, including after their last
   call, while the module loads, and while the callback waits on other work.
   [#16]
+- Accept `URL` objects from other realms, such as iframes, as sources, imports
+  and `workerUrl`.
 
 ## [0.2.0] - 2026-08-31
 

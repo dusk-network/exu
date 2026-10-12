@@ -8,8 +8,9 @@ export const NullTarget = Object.create(null);
 
 /**
  * Whether a property read on an exports proxy names a WebAssembly export.
- * `then` and symbols are not, so promise resolution and coercion never treat
- * the proxy as a thenable or call into the worker.
+ * `then` and symbols are not, so promise resolution never treats the proxy
+ * as a thenable, and symbol lookups (`Symbol.toPrimitive`, `Symbol.iterator`)
+ * never call into the worker.
  *
  * @param {string|symbol} prop - The property being read.
  * @returns {boolean}
