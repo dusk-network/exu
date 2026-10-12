@@ -5,9 +5,9 @@
 // Copyright (c) DUSK NETWORK. All rights reserved.
 
 // node e2e/browsers.mjs — runs the suite in Chromium, Firefox and WebKit
-// (headless, via Playwright), once cross-origin isolated and once under a
-// browser-extension CSP (`worker-src 'self'`). ENGINES=chromium,firefox limits
-// the engines.
+// (headless, via Playwright), once cross-origin isolated and once as in a
+// browser extension: its CSP, which allows no Blob workers, and no cross-origin
+// isolation. ENGINES=chromium,firefox limits the engines.
 import { createServer } from "node:http";
 import { readFile, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
@@ -21,8 +21,10 @@ const types = {
   ".js": "text/javascript",
   ".wasm": "application/wasm",
 };
+// The Dusk wallet extension's (Manifest V3 `extension_pages`); `worker-src`
+// falls back to `script-src`.
 const EXTENSION_CSP =
-  "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'";
+  "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';";
 
 const server = createServer(async (req, res) => {
   const { pathname } = new URL(req.url, "http://localhost");
@@ -32,11 +34,12 @@ const server = createServer(async (req, res) => {
     const body = await readFile(path);
     const headers = {
       "Content-Type": types[extname(path)] ?? "application/octet-stream",
-      "Cross-Origin-Opener-Policy": "same-origin",
-      "Cross-Origin-Embedder-Policy": "require-corp",
     };
     if (pathname.endsWith("/csp.html")) {
       headers["Content-Security-Policy"] = EXTENSION_CSP;
+    } else {
+      headers["Cross-Origin-Opener-Policy"] = "same-origin";
+      headers["Cross-Origin-Embedder-Policy"] = "require-corp";
     }
     res.writeHead(200, headers).end(body);
   } catch {
@@ -47,9 +50,10 @@ await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const base = `http://127.0.0.1:${server.address().port}/e2e/browser`;
 
 const engines = (process.env.ENGINES ?? "chromium,firefox,webkit").split(",");
+// [label, page, cross-origin isolated, only these cases]
 const pages = [
-  ["isolated", "index.html", []],
-  ["extension-csp", "csp.html", []],
+  ["isolated", "index.html", true, []],
+  ["extension-csp", "csp.html", false, []],
 ];
 const report = [];
 let ok = true;
@@ -63,7 +67,7 @@ for (const engine of engines) {
     ok = false;
     continue;
   }
-  for (const [label, file, only] of pages) {
+  for (const [label, file, isolated, only] of pages) {
     const runtime = `${engine} ${browser.version()} (${label})`;
     const page = await browser.newPage();
     page.on("console", (msg) => {
@@ -84,6 +88,12 @@ for (const engine of engines) {
       const result = await page.evaluate(() => globalThis.__e2e);
       report.push(result);
       ok &&= result.summary.ok;
+      if (
+        await page.evaluate(() => globalThis.crossOriginIsolated) !== isolated
+      ) {
+        console.log(`${runtime}: crossOriginIsolated is not ${isolated}`);
+        ok = false;
+      }
     } catch (error) {
       console.log(`${runtime}: ${error.message.split("\n")[0]}`);
       ok = false;
