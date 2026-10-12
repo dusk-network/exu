@@ -722,6 +722,9 @@ export function cases(ctx) {
     },
     {
       name: "a worker's message listeners follow EventTarget's rules",
+      // Bun 1.3.9 calls a worker's listeners with another `this` than `self`.
+      skip: () =>
+        ctx.runtime.startsWith("bun ") ? "Bun's own listener `this`" : false,
       async run() {
         const source = await ctx.bytes("probe.wasm");
         const module = new Module({

@@ -23,35 +23,77 @@ function webWorkerGlobals() {
   const { parentPort } = globalThis.process.getBuiltinModule(
     "node:worker_threads",
   );
-  // A real EventTarget gives listeners a Web Worker's rules: registration
-  // order, `once`, removal during dispatch, errors reported as uncaught. As a
-  // Web Worker's event handler, `onmessage` takes its place among them when
-  // first set and keeps it until cleared.
-  const target = new EventTarget();
+  // Message listeners under the DOM's rules, as a Web Worker's: registration
+  // order, one entry per listener and capture flag, `once`, `signal`, `this`
+  // as the worker global, and a snapshot per event (listeners added meanwhile
+  // wait for the next one; removed ones do not run). A listener that throws
+  // is reported as uncaught and the others still run. As a Web Worker's event
+  // handler, `onmessage` takes its place when first set until cleared.
+  const listeners = [];
+  const remove = (callback, capture) => {
+    const index = listeners.findIndex((entry) =>
+      entry.callback === callback && entry.capture === capture
+    );
+    if (index !== -1) listeners.splice(index, 1)[0].removed = true;
+  };
+  const captureOf = (options) =>
+    typeof options === "boolean" ? options : Boolean(options?.capture);
+
+  globalThis.addEventListener = (type, callback, options) => {
+    if (type !== "message" || !callback) return;
+    const capture = captureOf(options);
+    const signal = typeof options === "object" ? options?.signal : undefined;
+    if (signal?.aborted) return;
+    if (
+      listeners.some((e) => e.callback === callback && e.capture === capture)
+    ) {
+      return;
+    }
+    listeners.push({ callback, capture, once: Boolean(options?.once) });
+    signal?.addEventListener("abort", () => remove(callback, capture), {
+      once: true,
+    });
+  };
+  globalThis.removeEventListener = (type, callback, options) => {
+    if (type === "message") remove(callback, captureOf(options));
+  };
+
   let onmessage = null;
   const onmessageListener = (event) => onmessage?.call(globalThis, event);
-
   globalThis.self = globalThis;
   Object.defineProperty(globalThis, "onmessage", {
     get: () => onmessage,
     set: (handler) => {
       const next = typeof handler === "function" ? handler : null;
       if (next && !onmessage) {
-        target.addEventListener("message", onmessageListener);
+        globalThis.addEventListener("message", onmessageListener);
       }
-      if (!next) target.removeEventListener("message", onmessageListener);
+      if (!next) globalThis.removeEventListener("message", onmessageListener);
       onmessage = next;
     },
     configurable: true,
   });
-  globalThis.addEventListener = (...args) => target.addEventListener(...args);
-  globalThis.removeEventListener = (...args) =>
-    target.removeEventListener(...args);
   globalThis.postMessage = (data, transfer) =>
     parentPort.postMessage(data, transfer);
 
-  const deliver = ({ data, ports }) =>
-    target.dispatchEvent(new MessageEvent("message", { data, ports }));
+  const deliver = ({ data, ports }) => {
+    const event = new MessageEvent("message", { data, ports });
+    for (const entry of [...listeners]) {
+      if (entry.removed) continue;
+      if (entry.once) remove(entry.callback, entry.capture);
+      try {
+        if (typeof entry.callback === "function") {
+          entry.callback.call(globalThis, event);
+        } else {
+          entry.callback.handleEvent(event);
+        }
+      } catch (error) {
+        globalThis.process.nextTick(() => {
+          throw error;
+        });
+      }
+    }
+  };
   let queued = [];
   parentPort.on("message", ({ data, ports }) => {
     if (queued) queued.push({ data, ports });
