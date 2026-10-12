@@ -10,7 +10,7 @@ import { cases } from "./cases.js";
 const CASE_TIMEOUT = 30_000;
 
 // Globals cases may patch, restored after every case.
-const PATCHABLE = ["Worker", "MessageChannel", "fetch"];
+const PATCHABLE = ["MessageChannel", "fetch"];
 const pick = (object, keys) =>
   Object.fromEntries(keys.map((key) => [key, object[key]]));
 
@@ -21,6 +21,8 @@ const pick = (object, keys) =>
  */
 export async function runAll(ctx, { log = console.log, only } = {}) {
   const results = [];
+  // Where Exu finds its `Worker` class (`node:worker_threads` on Node).
+  const host = ctx.workerHost ?? globalThis;
   // Close every module a case opened, so idle workers do not outlive it.
   const opened = new Set();
   const Module = class extends ctx.Module {
@@ -53,8 +55,9 @@ export async function runAll(ctx, { log = console.log, only } = {}) {
     // case that timed out and keeps running) can be ended, and restore any
     // globals it patched.
     const saved = { ...pick(globalThis, PATCHABLE) };
+    const { Worker } = host;
     const workers = [];
-    globalThis.Worker = class extends saved.Worker {
+    host.Worker = class extends Worker {
       constructor(...args) {
         super(...args);
         workers.push(this);
@@ -81,6 +84,7 @@ export async function runAll(ctx, { log = console.log, only } = {}) {
     } finally {
       clearTimeout(timer);
       Object.assign(globalThis, saved);
+      host.Worker = Worker;
       if (timedOut) workers.forEach((worker) => worker.terminate());
     }
     // A rejection nobody handled is a failure in its own right. Runtimes

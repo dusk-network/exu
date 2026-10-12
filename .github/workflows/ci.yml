@@ -18,3 +18,7 @@ jobs:
       - run: deno check src/mod.js
       - run: deno task coverage
       - run: deno run --allow-read --allow-net e2e/deno.js
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node e2e/node.js

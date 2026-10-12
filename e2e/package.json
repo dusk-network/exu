@@ -5,6 +5,7 @@
   "scripts": {
     "deno": "deno run --allow-read --allow-net ./deno.js",
     "bun": "bun ./bun.js",
+    "node": "node ./node.js",
     "browsers": "node ./browsers.mjs"
   },
   "devDependencies": {
