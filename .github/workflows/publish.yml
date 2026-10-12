@@ -1,0 +1,31 @@
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag to publish, such as v0.3.0
+        required: true
+
+jobs:
+  publish:
+    runs-on: core
+    permissions:
+      contents: read
+      id-token: write # JSR authenticates the linked repository through OIDC
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Check the tag matches deno.json
+        run: |
+          version=$(deno eval 'console.log(JSON.parse(Deno.readTextFileSync("deno.json")).version)')
+          test "v$version" = "$TAG" || { echo "deno.json has $version, tag is $TAG"; exit 1; }
+      - run: deno publish
