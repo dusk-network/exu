@@ -698,6 +698,53 @@ export function cases(ctx) {
       },
     },
     {
+      name: "a worker listener that fails on a held message fails its task",
+      skip: () => ctx.runtime.startsWith("node ") ? false : "Node threads only",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({
+          source,
+          workerUrl: ctx.url("failing-listener-worker.js"),
+        });
+        await assert.rejects(module.api().add(1, 2));
+      },
+    },
+    {
+      name: "a worker's message handlers run in the order they were added",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({
+          source,
+          workerUrl: ctx.url("ordered-worker.js"),
+        });
+        assert.equal(await module.api().add(1, 2), 3);
+      },
+    },
+    {
+      name: "tasks aborted while their threads wait to start start none",
+      skip: () => ctx.runtime.startsWith("node ") ? false : "Node threads only",
+      async run() {
+        const module = await probe();
+        await module.api().add(1, 2); // compiled, with one idle thread
+        const controller = new AbortController();
+        const reason = new Error("never mind");
+        const stats = await trackWorkers(async () => {
+          const tasks = Array.from(
+            { length: 16 },
+            () => module.api({ signal: controller.signal }).add(1, 2),
+          );
+          // Let the tasks take their places in the pool, but not a turn of
+          // the event loop, on which the first thread would start.
+          for (let i = 0; i < 20; i++) await null;
+          controller.abort(reason);
+          for (const task of tasks) await assert.rejects(task, { is: reason });
+          module.close();
+          await tick(300);
+        });
+        assert.ok(stats.created <= 1, `${stats.created} thread(s) started`);
+      },
+    },
+    {
       name: "a worker from another Exu version fails clearly",
       async run() {
         const source = await ctx.bytes("probe.wasm");

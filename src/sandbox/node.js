@@ -23,13 +23,21 @@ function webWorkerGlobals() {
   const { parentPort } = globalThis.process.getBuiltinModule(
     "node:worker_threads",
   );
+  // Listeners in registration order. As with a Web Worker's event handler,
+  // `onmessage` takes its place when first set and keeps it until cleared.
   const listeners = new Set();
   let onmessage = null;
+  const onmessageListener = (event) => onmessage?.call(globalThis, event);
 
   globalThis.self = globalThis;
   Object.defineProperty(globalThis, "onmessage", {
     get: () => onmessage,
-    set: (listener) => onmessage = listener,
+    set: (handler) => {
+      const next = typeof handler === "function" ? handler : null;
+      if (next && !onmessage) listeners.add(onmessageListener);
+      if (!next) listeners.delete(onmessageListener);
+      onmessage = next;
+    },
     configurable: true,
   });
   globalThis.addEventListener = (type, listener) => {
@@ -41,9 +49,12 @@ function webWorkerGlobals() {
   globalThis.postMessage = (data, transfer) =>
     parentPort.postMessage(data, transfer);
 
+  // Listeners added while an event is delivered wait for the next one.
   const deliver = (event) => {
-    onmessage?.(event);
-    for (const listener of listeners) listener(event);
+    for (const listener of [...listeners]) {
+      if (typeof listener === "function") listener.call(globalThis, event);
+      else listener.handleEvent(event);
+    }
   };
   let queued = [];
   parentPort.on("message", ({ data, ports }) => {
@@ -76,21 +87,28 @@ const nextTurn = () =>
 
 /**
  * Starts a {@link NodeWorker} on a later turn of the event loop, after any
- * started before it.
+ * started before it. A start no longer `wanted` by then (its task aborted, its
+ * module closed) gives `null` and costs no turn.
  *
  * @param {URL|string} [workerUrl]
- * @returns {Promise<NodeWorker>}
+ * @param {() => boolean} [wanted]
+ * @returns {Promise<NodeWorker|null>}
  */
-export function startNodeWorker(workerUrl) {
-  const started = starting.then(nextTurn).then(() => new NodeWorker(workerUrl));
+export function startNodeWorker(workerUrl, wanted = () => true) {
+  const started = starting.then(async () => {
+    if (!wanted()) return null;
+    await nextTurn();
+    return wanted() ? new NodeWorker(workerUrl) : null;
+  });
   starting = started.catch(() => {});
   return started;
 }
 
 /**
  * The code a thread runs: Exu's worker, or the worker module at `href`. A
- * module that fails to load is rethrown as an uncaught exception, so the
- * thread fails whatever Node's unhandled-rejection policy.
+ * module that fails to load, or a listener that throws on a held message, is
+ * rethrown as an uncaught exception, so the thread fails whatever Node's
+ * unhandled-rejection policy.
  *
  * @param {string} [href]
  * @returns {string}
@@ -100,7 +118,7 @@ const threadSource = (href) =>
     ? `const start = (${webWorkerGlobals})();\n(${worker})();\nstart();`
     : `const start = (${webWorkerGlobals})();\nimport(${
       JSON.stringify(href)
-    }).then(start, (error) => process.nextTick(() => { throw error; }));`;
+    }).then(start).catch((error) => process.nextTick(() => { throw error; }));`;
 
 /**
  * A sandbox worker on a `node:worker_threads` thread that behaves like a Web
@@ -112,9 +130,27 @@ const threadSource = (href) =>
 export class NodeWorker extends EventTarget {
   #thread;
   #ended = false;
+  #onmessage = null;
+  #onmessageListener = (event) => this.#onmessage?.call(this, event);
 
-  /** @type {((event: MessageEvent) => void) | null} */
-  onmessage = null;
+  /**
+   * As a Web Worker's event handler: it takes its place among the `message`
+   * listeners when first set, and keeps it until cleared.
+   *
+   * @type {((event: MessageEvent) => void) | null}
+   */
+  get onmessage() {
+    return this.#onmessage;
+  }
+
+  set onmessage(handler) {
+    const next = typeof handler === "function" ? handler : null;
+    if (next && !this.#onmessage) {
+      this.addEventListener("message", this.#onmessageListener);
+    }
+    if (!next) this.removeEventListener("message", this.#onmessageListener);
+    this.#onmessage = next;
+  }
 
   /**
    * @param {URL|string} [workerUrl] - A worker module to start instead of
@@ -132,11 +168,10 @@ export class NodeWorker extends EventTarget {
     );
     this.#thread = new Worker(threadSource(href), { eval: true });
 
-    this.#thread.on("message", (data) => {
-      const event = new MessageEvent("message", { data });
-      this.onmessage?.(event);
-      this.dispatchEvent(event);
-    });
+    this.#thread.on(
+      "message",
+      (data) => this.dispatchEvent(new MessageEvent("message", { data })),
+    );
     this.#thread.on("error", (error) => this.#fail("error", error));
     this.#thread.on(
       "messageerror",

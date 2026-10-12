@@ -98,9 +98,9 @@ export class WorkerChannel {
 
     // Requests queue behind the worker's start; a failed start kills the
     // channel with that error.
-    this.#pending = spawnWorker(workerUrl).then((worker) => {
+    this.#pending = spawnWorker(workerUrl, () => !this.#dead).then((worker) => {
       if (this.#dead) {
-        worker.terminate();
+        worker?.terminate();
         return;
       }
       this.#worker = worker;

@@ -97,11 +97,13 @@ function probeFileWorker() {
  *   the file) the worker is built from a Blob URL.
  *
  * @param {URL|string} [workerUrl] - The worker module to start.
- * @returns {Promise<Worker>}
+ * @param {() => boolean} [wanted] - Whether the worker is still wanted; on
+ *   Node, a start that waited and is no longer wanted gives `null`.
+ * @returns {Promise<Worker|null>}
  */
-export async function spawnWorker(workerUrl) {
+export async function spawnWorker(workerUrl, wanted) {
   if (isNode()) {
-    return startNodeWorker(workerUrl);
+    return startNodeWorker(workerUrl, wanted);
   }
   if (workerUrl !== undefined) {
     return new Worker(workerUrl, { type: "module" });
