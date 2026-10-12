@@ -119,6 +119,23 @@ const hrefOf = (value) => {
 };
 
 /**
+ * Compiles the module at `href`. Node's `fetch` cannot read `file:` URLs, so
+ * where Node's modules are available those are read from disk.
+ * @private
+ *
+ * @param {string} href
+ * @returns {Promise<WebAssembly.Module>}
+ */
+const compileUrl = (href) => {
+  const fs = href.startsWith("file:")
+    ? globalThis.process?.getBuiltinModule?.("node:fs/promises")
+    : undefined;
+  return fs
+    ? fs.readFile(new URL(href)).then((bytes) => WebAssembly.compile(bytes))
+    : WebAssembly.compileStreaming(fetch(href));
+};
+
+/**
  * Ensures at runtime the imports value is valid.
  * @private
  *
@@ -163,9 +180,9 @@ export class Module {
     const source = options?.source ?? options;
     const href = hrefOf(source);
     if (href !== undefined) {
-      this.#module = WebAssembly.compileStreaming(fetch(href));
+      this.#module = compileUrl(href);
     } else if (typeof source === "string") {
-      this.#module = WebAssembly.compileStreaming(fetch(source));
+      this.#module = compileUrl(source);
     } else if (isArrayBuffer(source)) {
       this.#module = WebAssembly.compile(source);
     } else if (ArrayBuffer.isView(source)) {

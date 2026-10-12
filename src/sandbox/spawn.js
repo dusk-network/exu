@@ -4,6 +4,7 @@
 //
 // Copyright (c) DUSK NETWORK. All rights reserved.
 
+import { needsNodeWorker, NodeWorker } from "./node.js";
 import worker from "./worker.js";
 
 let blobUrl;
@@ -87,6 +88,8 @@ function probeFileWorker() {
 /**
  * Starts a sandbox worker.
  *
+ * - On Node, which has no Web Workers, the worker runs on a
+ *   `node:worker_threads` thread (see ./node.js).
  * - `workerUrl`, when given, is used as is.
  * - In browsers, Exu's worker module file is used when it starts, which
  *   satisfies `worker-src 'self'`.
@@ -97,6 +100,9 @@ function probeFileWorker() {
  * @returns {Promise<Worker>}
  */
 export async function spawnWorker(workerUrl) {
+  if (needsNodeWorker()) {
+    return new NodeWorker(workerUrl);
+  }
   if (workerUrl !== undefined) {
     return new Worker(workerUrl, { type: "module" });
   }

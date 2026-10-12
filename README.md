@@ -1,6 +1,6 @@
 # Exu
 
-Exu is a high-performance library designed for both browser and Deno environments, facilitating seamless integration of WebAssembly modules. It adopts a unique sandbox/worker approach to ensure safe and efficient execution of tasks.
+Exu is a high-performance library for browsers, Deno, Bun and Node, facilitating seamless integration of WebAssembly modules. It adopts a unique sandbox/worker approach to ensure safe and efficient execution of tasks.
 
 ## Key Features
 
@@ -17,6 +17,9 @@ To include Exu in your project, import the module directly from the provided URL
 ```javascript
 import { Module } from "jsr:@dusk/exu";
 ```
+
+On Node, add it with `npx jsr add @dusk/exu` and import it from
+`@dusk/exu`.
 
 ### Basic Usage
 
@@ -142,7 +145,7 @@ emit the worker as a file of their own, which pages limited to
 `worker-src 'self'` (browser extensions, for example) can start. If that file
 does not start (Exu was loaded from another origin, or bundled without it), Exu
 falls back to a worker built from a Blob URL, which `worker-src 'self'` refuses.
-Deno, Bun and Node always use the Blob worker, which needs no file access.
+Deno and Bun always use the Blob worker, which needs no file access.
 
 To start a different copy of the worker, pass its URL:
 
@@ -152,6 +155,14 @@ const module = new Module({ source, workerUrl });
 
 The worker must come from the same Exu version. A mismatched worker rejects
 tasks with an "Incompatible Exu sandbox worker" error.
+
+### Node
+
+Node (22.3 or later) has no Web Workers, so Exu runs each sandbox worker on a
+`node:worker_threads` thread, with the same pool, isolation and aborts. A
+`file:` URL source is read from disk. A `workerUrl` is imported into the
+thread (a relative one is resolved against the working directory), and so are
+imports, so they must be modules Node can import, such as `file:` URLs.
 
 ## License
 
