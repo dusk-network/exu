@@ -4,6 +4,7 @@
 //
 // Copyright (c) DUSK NETWORK. All rights reserved.
 
+import { isNode, startNodeWorker } from "./node.js";
 import worker from "./worker.js";
 
 let blobUrl;
@@ -87,6 +88,8 @@ function probeFileWorker() {
 /**
  * Starts a sandbox worker.
  *
+ * - On Node, which has no Web Workers, the worker runs on a
+ *   `node:worker_threads` thread (see ./node.js).
  * - `workerUrl`, when given, is used as is.
  * - In browsers, Exu's worker module file is used when it starts, which
  *   satisfies `worker-src 'self'`.
@@ -94,9 +97,14 @@ function probeFileWorker() {
  *   the file) the worker is built from a Blob URL.
  *
  * @param {URL|string} [workerUrl] - The worker module to start.
- * @returns {Promise<Worker>}
+ * @param {() => boolean} [wanted] - Whether the worker is still wanted; on
+ *   Node, a start that waited and is no longer wanted gives `null`.
+ * @returns {Promise<Worker|null>}
  */
-export async function spawnWorker(workerUrl) {
+export async function spawnWorker(workerUrl, wanted) {
+  if (isNode()) {
+    return startNodeWorker(workerUrl, wanted);
+  }
   if (workerUrl !== undefined) {
     return new Worker(workerUrl, { type: "module" });
   }

@@ -56,3 +56,9 @@ Deno.test("ArrayBuffers from another realm are accepted", async () => {
   const result = await new Module(buffer).task(() => 42)();
   assert.equal(result, 42);
 });
+
+Deno.test("a missing file: source rejects with fetch's TypeError", async () => {
+  // Deno and Bun fetch file: URLs; only Node reads them from disk.
+  const module = new Module(new URL("./assets/missing.wasm", import.meta.url));
+  await assert.rejects(module.task(() => 42)(), TypeError);
+});

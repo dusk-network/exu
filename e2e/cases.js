@@ -14,7 +14,9 @@
 //   Module, runtime, hardwareConcurrency,
 //   bytes(name): Promise<Uint8Array>, url(name): URL, importsUrl: URL,
 //   workerEntry: URL (Exu's own worker module),
-//   unhandled: unknown[]  (unhandled rejections recorded by the runner)
+//   unhandled: unknown[]  (unhandled rejections recorded by the runner),
+//   workerHost?: where Exu finds its `Worker` class (default globalThis;
+//     `node:worker_threads` on Node), so the cases can count workers
 // }
 
 import * as assert from "./assert.js";
@@ -22,9 +24,12 @@ import * as assert from "./assert.js";
 const INVALID = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 0xff]);
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
+// Where Exu finds its `Worker` class; set from ctx by `cases`.
+let workerHost = globalThis;
+
 /** Counts workers created/terminated while `fn` runs. */
 async function trackWorkers(fn) {
-  const Original = globalThis.Worker;
+  const Original = workerHost.Worker;
   const stats = { created: 0, terminated: 0, alive: 0, maxAlive: 0, urls: [] };
   const workers = new Set();
   class Tracked extends Original {
@@ -47,12 +52,12 @@ async function trackWorkers(fn) {
       return super.terminate();
     }
   }
-  globalThis.Worker = Tracked;
+  workerHost.Worker = Tracked;
   try {
     await fn(stats);
   } finally {
     // Only undo our own patch: after a timeout the runner has moved on.
-    if (globalThis.Worker === Tracked) globalThis.Worker = Original;
+    if (workerHost.Worker === Tracked) workerHost.Worker = Original;
   }
   return stats;
 }
@@ -64,7 +69,8 @@ async function trackWorkers(fn) {
  * afterwards.
  */
 async function withoutLeftovers(fn) {
-  const { Worker, MessageChannel } = globalThis;
+  const { Worker } = workerHost;
+  const { MessageChannel } = globalThis;
   const started = [];
   const channels = [];
   const TrackedWorker = class extends Worker {
@@ -79,17 +85,15 @@ async function withoutLeftovers(fn) {
       channels.push(this);
     }
   };
-  Object.assign(globalThis, {
-    Worker: TrackedWorker,
-    MessageChannel: TrackedChannel,
-  });
+  workerHost.Worker = TrackedWorker;
+  globalThis.MessageChannel = TrackedChannel;
   const cleanup = new AbortController();
   try {
     return await fn(cleanup.signal);
   } finally {
     cleanup.abort(new Error("case cleanup"));
     // Only undo our own patches: after a timeout the runner has moved on.
-    if (globalThis.Worker === TrackedWorker) globalThis.Worker = Worker;
+    if (workerHost.Worker === TrackedWorker) workerHost.Worker = Worker;
     if (globalThis.MessageChannel === TrackedChannel) {
       globalThis.MessageChannel = MessageChannel;
     }
@@ -129,6 +133,7 @@ async function longestStall(fn) {
 }
 
 export function cases(ctx) {
+  workerHost = ctx.workerHost ?? globalThis;
   const { Module } = ctx;
   const probe = async () => new Module(await ctx.bytes("probe.wasm"));
 
@@ -576,12 +581,16 @@ export function cases(ctx) {
 
     // ── The sandbox worker ──────────────────────────────────────────────
     {
-      name: "starts Exu's worker file in browsers, a Blob worker elsewhere",
+      name:
+        "starts Exu's worker file in browsers, a Blob worker on Deno and Bun, a thread on Node",
       async run() {
         const module = await probe();
         const stats = await trackWorkers(() => module.api().add(1, 2));
         const url = stats.urls.at(-1);
-        if (/^(deno|bun) /.test(ctx.runtime)) {
+        if (ctx.runtime.startsWith("node ")) {
+          // A thread evaluating Exu's worker code, not a file or a Blob.
+          assert.ok(url.includes("parentPort"), `started ${url.slice(0, 60)}`);
+        } else if (/^(deno|bun) /.test(ctx.runtime)) {
           assert.ok(url.startsWith("blob:"), `started ${url}`);
         } else {
           assert.ok(
@@ -599,12 +608,19 @@ export function cases(ctx) {
         const stats = await trackWorkers(async () => {
           assert.equal(await module.api().add(1, 2), 3);
         });
-        assert.equal(stats.urls[0], ctx.workerEntry.href);
+        if (ctx.runtime.startsWith("node ")) {
+          // The thread imports the given module.
+          const href = JSON.stringify(ctx.workerEntry.href);
+          assert.ok(stats.urls[0].includes(`import(${href})`), stats.urls[0]);
+        } else {
+          assert.equal(stats.urls[0], ctx.workerEntry.href);
+        }
       },
     },
     {
       name: "a Node-style process global does not change the worker",
-      skip: () => /^(deno|bun) /.test(ctx.runtime) ? "browsers only" : false,
+      skip: () =>
+        /^(deno|bun|node) /.test(ctx.runtime) ? "browsers only" : false,
       async run() {
         // Electron pages and some bundles define `process`: still a browser.
         const had = Object.hasOwn(globalThis, "process");
@@ -652,6 +668,94 @@ export function cases(ctx) {
         } finally {
           frame.remove();
         }
+      },
+    },
+    {
+      name: "a workerUrl that loads slowly still gets its first messages",
+      // Browsers and Deno drop messages that arrive while a module worker is
+      // still awaiting at top level (and Bun 1.3.9 can crash on such a
+      // worker); Node's threads hold them until it has loaded.
+      skip: () => ctx.runtime.startsWith("node ") ? false : "Node threads only",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({
+          source,
+          workerUrl: ctx.url("slow-worker.js"),
+        });
+        assert.equal(await module.api().add(1, 2), 3);
+      },
+    },
+    {
+      name: "a workerUrl that fails to load rejects its task promptly",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({
+          source,
+          workerUrl: ctx.url("broken-worker.js"),
+        });
+        // Within assert.rejects' 5 s, not the 30 s start timeout.
+        await assert.rejects(module.api().add(1, 2));
+      },
+    },
+    {
+      name: "a worker listener that fails on a held message fails its task",
+      skip: () => ctx.runtime.startsWith("node ") ? false : "Node threads only",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({
+          source,
+          workerUrl: ctx.url("failing-listener-worker.js"),
+        });
+        await assert.rejects(module.api().add(1, 2));
+      },
+    },
+    {
+      name: "a worker's message handlers run in the order they were added",
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({
+          source,
+          workerUrl: ctx.url("ordered-worker.js"),
+        });
+        assert.equal(await module.api().add(1, 2), 3);
+      },
+    },
+    {
+      name: "a worker's message listeners follow EventTarget's rules",
+      // Bun 1.3.9 calls a worker's listeners with another `this` than `self`.
+      skip: () =>
+        ctx.runtime.startsWith("bun ") ? "Bun's own listener `this`" : false,
+      async run() {
+        const source = await ctx.bytes("probe.wasm");
+        const module = new Module({
+          source,
+          workerUrl: ctx.url("listeners-worker.js"),
+        });
+        assert.equal(await module.api().add(1, 2), 3);
+      },
+    },
+    {
+      name: "tasks aborted while their threads wait to start start none",
+      skip: () => ctx.runtime.startsWith("node ") ? false : "Node threads only",
+      async run() {
+        const module = await probe();
+        await module.api().add(1, 2); // compiled, with one idle thread
+        const controller = new AbortController();
+        const reason = new Error("never mind");
+        const stats = await trackWorkers(async () => {
+          const tasks = Array.from(
+            { length: 16 },
+            () => module.api({ signal: controller.signal }).add(1, 2),
+          );
+          // Let the tasks take their places in the pool, but not a turn of
+          // the event loop, on which the first thread would start.
+          for (let i = 0; i < 20; i++) await null;
+          controller.abort(reason);
+          for (const task of tasks) await assert.rejects(task, { is: reason });
+          module.close();
+          await tick(300);
+        });
+        assert.ok(stats.created <= 1, `${stats.created} thread(s) started`);
       },
     },
     {
