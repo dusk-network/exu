@@ -50,9 +50,7 @@ export function bytes(actual, expected, message) {
   const a = new Uint8Array(actual.buffer, actual.byteOffset, actual.byteLength);
   const b = new Uint8Array(expected);
   if (a.length !== b.length || a.some((x, i) => x !== b[i])) {
-    throw new AssertionError(
-      message ?? `expected ${show(b)}, got ${show(a)}`,
-    );
+    throw new AssertionError(message ?? `expected ${show(b)}, got ${show(a)}`);
   }
 }
 
@@ -94,9 +92,9 @@ export async function rejects(promise, expected = {}, ms = 5000) {
   }
   if ("is" in expected && error !== expected.is) {
     throw new AssertionError(
-      `expected rejection with ${
-        show(expected.is?.message ?? expected.is)
-      }, got ${error?.name}: ${error?.message}`,
+      `expected rejection with ${show(
+        expected.is?.message ?? expected.is,
+      )}, got ${error?.name}: ${error?.message}`,
     );
   }
   if (expected.type && !(error instanceof expected.type)) {
@@ -110,9 +108,10 @@ export async function rejects(promise, expected = {}, ms = 5000) {
     );
   }
   if (expected.message) {
-    const matches = expected.message instanceof RegExp
-      ? expected.message.test(error?.message)
-      : error?.message === expected.message;
+    const matches =
+      expected.message instanceof RegExp
+        ? expected.message.test(error?.message)
+        : error?.message === expected.message;
     if (!matches) {
       throw new AssertionError(
         `expected message ${expected.message}, got ${show(error?.message)}`,

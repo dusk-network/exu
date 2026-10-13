@@ -33,14 +33,20 @@ export class Sandbox {
    * @param {number} [config.startTimeout] - How long the worker may take to
    *   start, in ms.
    */
-  constructor(
-    { channel, module, importsUrl, signal, workerUrl, startTimeout },
-  ) {
-    this.#channel = channel ??
+  constructor({
+    channel,
+    module,
+    importsUrl,
+    signal,
+    workerUrl,
+    startTimeout,
+  }) {
+    this.#channel =
+      channel ??
       new WorkerChannel({ module, importsUrl, workerUrl, startTimeout });
     this.#channel.signal = signal;
     this.#begun = this.#channel.ready.then(() =>
-      this.#ended ? Promise.reject(this.#failure) : this.#channel.begin()
+      this.#ended ? Promise.reject(this.#failure) : this.#channel.begin(),
     );
     // Surfaced through the task's requests; a sandbox ended before any must
     // not raise an unhandled rejection.
@@ -57,7 +63,7 @@ export class Sandbox {
       get: (_, prop) =>
         isExportName(prop)
           ? (...args) =>
-            this.#send("request", { type: "call", member: prop, args })
+              this.#send("request", { type: "call", member: prop, args })
           : undefined,
     });
   }

@@ -15,7 +15,10 @@
     }
   },
   "types": "./src/mod.d.ts",
-  "files": ["src", "CHANGELOG.md"],
+  "files": [
+    "src",
+    "CHANGELOG.md"
+  ],
   "engines": {
     "node": ">=22.3"
   },

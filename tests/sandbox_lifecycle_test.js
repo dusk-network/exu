@@ -23,7 +23,7 @@ const createModule = () => {
 
 test("same-sandbox export calls are serialized", async () => {
   const result = await createModule().task(({ fibonacci }) =>
-    Promise.all([fibonacci(5), fibonacci(7)])
+    Promise.all([fibonacci(5), fibonacci(7)]),
   )({ signal: AbortSignal.timeout(10_000) });
 
   assert.deepEqual(result, [8, 21]);
@@ -63,7 +63,7 @@ test("worker failures reject active and future requests", async () => {
   // A thread that fails as soon as it gets a message.
   threads.Worker = class extends EventEmitter {
     postMessage(_message, transfer = []) {
-      transfer.forEach((value) => value.close?.());
+      for (const value of transfer) value.close?.();
       queueMicrotask(() => this.emit("error", new Error("worker failed")));
     }
     terminate() {}
@@ -101,10 +101,7 @@ test("sandbox remains usable after handled memory errors", async () => {
   const source = new Uint8Array([1]);
   const result = await createModule().task(
     async ({ fibonacci }, { memcpy }) => {
-      await assert.rejects(
-        () => memcpy(0xffff_ffff, source, 1),
-        Error,
-      );
+      await assert.rejects(() => memcpy(0xffff_ffff, source, 1), Error);
       return await fibonacci(5);
     },
   )({ signal: AbortSignal.timeout(10_000) });

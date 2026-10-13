@@ -19,12 +19,12 @@ test("a worker that fails to start leaves no port behind", async () => {
 
 test("the worker probe gives up on a worker that never replies", async () => {
   let terminated = false;
-  const silent = new class extends EventTarget {
+  const silent = new (class extends EventTarget {
     postMessage() {}
     terminate() {
       terminated = true;
     }
-  }();
+  })();
   assert.equal(await probeWorker(() => silent, 50), false);
   assert.ok(terminated);
 });
@@ -43,7 +43,7 @@ test("a worker that never starts rejects instead of hanging", async () => {
   const terminated = [];
   threads.Worker = class extends EventEmitter {
     postMessage(_message, transfer = []) {
-      transfer.forEach((port) => port.close?.()); // never answers
+      for (const port of transfer) port.close?.(); // never answers
     }
     terminate() {
       terminated.push(this);
@@ -70,7 +70,7 @@ test("a worker answers a host of another protocol with its own", async () => {
     const reply = new Promise((resolve) =>
       worker.addEventListener("message", ({ data }) => resolve(data), {
         once: true,
-      })
+      }),
     );
     worker.postMessage({ type: "init", protocol: PROTOCOL + 1 });
     assert.deepEqual(await reply, { ok: true, value: { protocol: PROTOCOL } });

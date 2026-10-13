@@ -97,7 +97,7 @@ async function withoutLeftovers(fn) {
     if (globalThis.MessageChannel === TrackedChannel) {
       globalThis.MessageChannel = MessageChannel;
     }
-    started.forEach((worker) => worker.terminate());
+    for (const worker of started) worker.terminate();
     channels.forEach(({ port1, port2 }) => {
       port1.close();
       port2.close();
@@ -197,8 +197,7 @@ export function cases(ctx) {
       },
     },
     {
-      name:
-        "a module used after its construction tick causes no unhandled rejection",
+      name: "a module used after its construction tick causes no unhandled rejection",
       async run() {
         const before = ctx.unhandled.length;
         const module = new Module(INVALID);
@@ -226,7 +225,7 @@ export function cases(ctx) {
             Promise.resolve(module.api({ signal })),
             1000,
             "await module.api()",
-          )
+          ),
         );
       },
     },
@@ -239,7 +238,7 @@ export function cases(ctx) {
             module.task((exports) => Promise.resolve(exports))({ signal }),
             1000,
             "task returning exports",
-          )
+          ),
         );
       },
     },
@@ -254,7 +253,7 @@ export function cases(ctx) {
           assert.rejects(
             module.task(() => 1)({ signal: AbortSignal.abort(reason) }),
             { is: reason },
-          )
+          ),
         );
         assert.equal(stats.created, 0, `${stats.created} worker(s) started`);
       },
@@ -310,8 +309,7 @@ export function cases(ctx) {
       },
     },
     {
-      name:
-        "an abort while the callback waits on something else rejects at once",
+      name: "an abort while the callback waits on something else rejects at once",
       async run() {
         const module = await probe();
         const controller = new AbortController();
@@ -359,10 +357,12 @@ export function cases(ctx) {
             () => new AbortController(),
           );
           const tasks = controllers.map((controller, i) =>
-            module.task(() => {
-              if (i === 0) controllers.slice(1).forEach((c) => c.abort());
-              else if (controller.signal.aborted) ran++;
-            })({ signal: controller.signal }).catch(() => {})
+            module
+              .task(() => {
+                if (i === 0) for (const c of controllers.slice(1)) c.abort();
+                else if (controller.signal.aborted) ran++;
+              })({ signal: controller.signal })
+              .catch(() => {}),
           );
           await Promise.all(tasks);
         }
@@ -373,7 +373,9 @@ export function cases(ctx) {
       name: "an abort beats a compile error that settles after it",
       async run() {
         const module = new Module(INVALID);
-        await module.task(() => 1)().catch(() => {}); // compilation has failed
+        await module
+          .task(() => 1)()
+          .catch(() => {}); // compilation has failed
         const controller = new AbortController();
         const reason = new Error("aborted first");
         const task = module.task(() => 1)({ signal: controller.signal });
@@ -479,10 +481,15 @@ export function cases(ctx) {
         const module = await probe();
         const stats = await trackWorkers(async () => {
           await module.api().add(1, 2);
-          await module.api().trap().catch(() => {});
-          await module.task(() => {
-            throw new Error("callback");
-          })().catch(() => {});
+          await module
+            .api()
+            .trap()
+            .catch(() => {});
+          await module
+            .task(() => {
+              throw new Error("callback");
+            })()
+            .catch(() => {});
           assert.equal(await module.api().inc(), 1);
           module.close();
         });
@@ -581,8 +588,7 @@ export function cases(ctx) {
 
     // ── The sandbox worker ──────────────────────────────────────────────
     {
-      name:
-        "starts Exu's worker file in browsers, a Blob worker on Deno and Bun, a thread on Node",
+      name: "starts Exu's worker file in browsers, a Blob worker on Deno and Bun, a thread on Node",
       async run() {
         const module = await probe();
         const stats = await trackWorkers(() => module.api().add(1, 2));
@@ -675,7 +681,8 @@ export function cases(ctx) {
       // Browsers and Deno drop messages that arrive while a module worker is
       // still awaiting at top level (and Bun 1.3.9 can crash on such a
       // worker); Node's threads hold them until it has loaded.
-      skip: () => ctx.runtime.startsWith("node ") ? false : "Node threads only",
+      skip: () =>
+        ctx.runtime.startsWith("node ") ? false : "Node threads only",
       async run() {
         const source = await ctx.bytes("probe.wasm");
         const module = new Module({
@@ -699,7 +706,8 @@ export function cases(ctx) {
     },
     {
       name: "a worker listener that fails on a held message fails its task",
-      skip: () => ctx.runtime.startsWith("node ") ? false : "Node threads only",
+      skip: () =>
+        ctx.runtime.startsWith("node ") ? false : "Node threads only",
       async run() {
         const source = await ctx.bytes("probe.wasm");
         const module = new Module({
@@ -736,16 +744,16 @@ export function cases(ctx) {
     },
     {
       name: "tasks aborted while their threads wait to start start none",
-      skip: () => ctx.runtime.startsWith("node ") ? false : "Node threads only",
+      skip: () =>
+        ctx.runtime.startsWith("node ") ? false : "Node threads only",
       async run() {
         const module = await probe();
         await module.api().add(1, 2); // compiled, with one idle thread
         const controller = new AbortController();
         const reason = new Error("never mind");
         const stats = await trackWorkers(async () => {
-          const tasks = Array.from(
-            { length: 16 },
-            () => module.api({ signal: controller.signal }).add(1, 2),
+          const tasks = Array.from({ length: 16 }, () =>
+            module.api({ signal: controller.signal }).add(1, 2),
           );
           // Let the tasks take their places in the pool, but not a turn of
           // the event loop, on which the first thread would start.
@@ -903,7 +911,7 @@ export function cases(ctx) {
             burn(10, 2),
             burn(1_000_000, 3),
             burn(0, 4),
-          ])
+          ]),
         )();
         assert.bytes(new Uint8Array(results), [1, 2, 3, 4]);
       },
@@ -915,7 +923,9 @@ export function cases(ctx) {
         const results = await Promise.all(
           Array.from({ length: 64 }, (_, i) => module.api().add(i, 1000)),
         );
-        results.forEach((value, i) => assert.equal(value, i + 1000));
+        for (const [i, value] of results.entries()) {
+          assert.equal(value, i + 1000);
+        }
       },
     },
     {
@@ -927,8 +937,9 @@ export function cases(ctx) {
         const stats = await trackWorkers(() =>
           Promise.all(
             Array.from({ length: 4 * limit }, () =>
-              module.api().burn(200_000, 1)),
-          )
+              module.api().burn(200_000, 1),
+            ),
+          ),
         );
         assert.ok(
           stats.maxAlive <= limit,
@@ -942,8 +953,9 @@ export function cases(ctx) {
         const source = await ctx.bytes("probe.wasm");
         const module = new Module({ source, workers: 1 });
         const result = await assert.within(
-          module.task(async ({ add }) =>
-            await add(1, 2) + await module.api().add(3, 4)
+          module.task(
+            async ({ add }) =>
+              (await add(1, 2)) + (await module.api().add(3, 4)),
           )(),
           3000,
           "nested task",
@@ -959,7 +971,7 @@ export function cases(ctx) {
         const stats = await trackWorkers(() =>
           Promise.all(
             Array.from({ length: 6 }, () => module.api().burn(150_000_000, 1)),
-          )
+          ),
         );
         assert.ok(
           stats.maxAlive <= 2,
@@ -987,9 +999,8 @@ export function cases(ctx) {
             return add(1, 2);
           })();
           await tick(250);
-          const queued = Array.from(
-            { length: 4 },
-            () => module.api().burn(10_000_000, 1),
+          const queued = Array.from({ length: 4 }, () =>
+            module.api().burn(10_000_000, 1),
           );
           goA.resolve(); // A computes now: the pool is no longer stalled
           await tick(30);
@@ -1013,7 +1024,7 @@ export function cases(ctx) {
         // it starts one (see the burst case below).
         assert.equal(await module.api().add(1, 2), 3);
         const stall = await longestStall(() =>
-          module.api().burn(300_000_000, 1)
+          module.api().burn(300_000_000, 1),
         );
         // RAIL: keep main-thread work under 50 ms.
         assert.ok(stall < 50, `event loop stalled ${stall.toFixed(1)} ms`);
@@ -1108,13 +1119,17 @@ export function cases(ctx) {
       async run() {
         const bytes = await ctx.bytes("probe.wasm");
         let binary = "";
-        bytes.forEach((b) => (binary += String.fromCharCode(b)));
+        for (const b of bytes) binary += String.fromCharCode(b);
         const url = `data:application/wasm;base64,${btoa(binary)}`;
         assert.equal(await new Module(url).api().add(2, 3), 5);
       },
     },
     {
       name: "a missing file: source rejects its tasks",
+      skip: () =>
+        typeof document !== "undefined"
+          ? "pages load sources over HTTP"
+          : false,
       async run() {
         const module = new Module(ctx.url("missing.wasm"));
         const task = module.task(() => 42)();
@@ -1123,7 +1138,10 @@ export function cases(ctx) {
           await assert.rejects(task, { type: TypeError });
         } else {
           // Node reads file: sources from disk; Bun's fetch fails as its fs.
-          const error = await task.then(() => null, (e) => e);
+          const error = await task.then(
+            () => null,
+            (e) => e,
+          );
           assert.equal(error?.code, "ENOENT");
         }
       },
@@ -1156,9 +1174,9 @@ export function cases(ctx) {
       name: "wallet-core 1.7.1 exposes its entry sizes through globals",
       async run() {
         // Not committed: drop a wallet-core build into e2e/assets to run this.
-        const wasm = await ctx.bytes("wallet-core-1.7.1.wasm").catch(() =>
-          null
-        );
+        const wasm = await ctx
+          .bytes("wallet-core-1.7.1.wasm")
+          .catch(() => null);
         if (!wasm) {
           throw new assert.Skip("e2e/assets/wallet-core-1.7.1.wasm absent");
         }

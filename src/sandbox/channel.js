@@ -98,18 +98,20 @@ export class WorkerChannel {
 
     // Requests queue behind the worker's start; a failed start kills the
     // channel with that error.
-    this.#pending = spawnWorker(workerUrl, () => !this.#dead).then((worker) => {
-      if (this.#dead) {
-        worker?.terminate();
-        return;
-      }
-      this.#worker = worker;
-      worker.addEventListener("error", fail);
-      worker.addEventListener("messageerror", fail);
-      worker.addEventListener("message", ({ data }) => {
-        if (data?.type === "expire" && !this.#dead) this.onexpire?.();
-      });
-    }).catch((error) => this.kill(error));
+    this.#pending = spawnWorker(workerUrl, () => !this.#dead)
+      .then((worker) => {
+        if (this.#dead) {
+          worker?.terminate();
+          return;
+        }
+        this.#worker = worker;
+        worker.addEventListener("error", fail);
+        worker.addEventListener("messageerror", fail);
+        worker.addEventListener("message", ({ data }) => {
+          if (data?.type === "expire" && !this.#dead) this.onexpire?.();
+        });
+      })
+      .catch((error) => this.kill(error));
 
     this.ready = this.request({
       type: "init",

@@ -42,14 +42,11 @@ export default function () {
     );
 
   const getGlobals = () =>
-    WebAssembly.Module.exports(state.module)
-      .filter(({ kind, name }) => kind === "global" && !name.startsWith("__"))
-      .reduce(
-        (acc, item) => (
-          (acc[item.name] = state.instance.exports[item.name].value), acc
-        ),
-        {},
-      );
+    Object.fromEntries(
+      WebAssembly.Module.exports(state.module)
+        .filter(({ kind, name }) => kind === "global" && !name.startsWith("__"))
+        .map(({ name }) => [name, state.instance.exports[name].value]),
+    );
 
   async function begin() {
     if (typeof state.importsUrl === "string") {
@@ -87,17 +84,18 @@ export default function () {
 
   function handleMemoryRequest({ data: { get, set } }) {
     try {
-      const memory = state.imports?.env?.memory ??
-        state.instance?.exports?.memory;
+      const memory =
+        state.imports?.env?.memory ?? state.instance?.exports?.memory;
 
       if (!(memory instanceof WebAssembly.Memory)) {
         throw new ReferenceError("WebAssembly.Memory is not defined");
       } else if (set) {
         const { dest, source, count } = set;
         const length = count ?? source.byteLength;
-        const bytes = typeof source === "number"
-          ? new Uint8Array(memory.buffer, source, length)
-          : source.subarray(0, length);
+        const bytes =
+          typeof source === "number"
+            ? new Uint8Array(memory.buffer, source, length)
+            : source.subarray(0, length);
 
         new Uint8Array(memory.buffer, dest, length).set(bytes);
         if (source instanceof Uint8Array) {

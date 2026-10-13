@@ -71,11 +71,12 @@ export async function runAll(ctx, { log = console.log, only } = {}) {
     try {
       await Promise.race([
         c.run(),
-        new Promise((_, reject) =>
-          timer = setTimeout(() => {
-            timedOut = true;
-            reject(new Error(`timed out after ${CASE_TIMEOUT} ms`));
-          }, CASE_TIMEOUT)
+        new Promise(
+          (_, reject) =>
+            (timer = setTimeout(() => {
+              timedOut = true;
+              reject(new Error(`timed out after ${CASE_TIMEOUT} ms`));
+            }, CASE_TIMEOUT)),
         ),
       ]);
     } catch (e) {
@@ -85,7 +86,7 @@ export async function runAll(ctx, { log = console.log, only } = {}) {
       clearTimeout(timer);
       Object.assign(globalThis, saved);
       host.Worker = Worker;
-      if (timedOut) workers.forEach((worker) => worker.terminate());
+      if (timedOut) for (const worker of workers) worker.terminate();
     }
     // A rejection nobody handled is a failure in its own right. Runtimes
     // report one on a later turn of the event loop, so give them two.
@@ -99,7 +100,7 @@ export async function runAll(ctx, { log = console.log, only } = {}) {
     for (const module of opened) module.close?.();
     opened.clear();
     // Whatever the case left running would skew the cases after it.
-    workers.forEach((worker) => worker.terminate());
+    for (const worker of workers) worker.terminate();
     const ms = performance.now() - started;
     if (failed && error instanceof Skip) {
       results.push({ name: c.name, outcome: "skip", detail: error.message });
@@ -107,13 +108,17 @@ export async function runAll(ctx, { log = console.log, only } = {}) {
       continue;
     }
     const outcome = failed
-      ? (known ? "known" : "fail")
-      : (known ? "fixed" : "pass");
+      ? known
+        ? "known"
+        : "fail"
+      : known
+        ? "fixed"
+        : "pass";
     const detail = !failed
       ? ""
       : error instanceof Error
-      ? `${error.name}: ${error.message}`
-      : `rejected with ${String(error)}`;
+        ? `${error.name}: ${error.message}`
+        : `rejected with ${String(error)}`;
     results.push({ name: c.name, outcome, known, detail, ms });
     const tag = {
       pass: "PASS  ",

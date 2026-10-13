@@ -1,6 +1,10 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
-  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
   "files": {
     "includes": ["**", "!e2e/assets/*.wat", "!tests/example"]
   },
@@ -18,7 +22,11 @@
     }
   },
   "linter": {
-    "rules": { "recommended": true }
+    "rules": {
+      "preset": "recommended"
+    }
   },
-  "assist": { "enabled": false }
+  "assist": {
+    "enabled": false
+  }
 }

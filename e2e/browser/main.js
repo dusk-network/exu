@@ -17,20 +17,23 @@ const asset = (name) => new URL(`../assets/${name}`, import.meta.url);
 const params = new URLSearchParams(location.search);
 const only = params.getAll("only");
 
-globalThis.__e2e = runAll({
-  Module,
-  runtime: params.get("runtime") ?? navigator.userAgent,
-  hardwareConcurrency: navigator.hardwareConcurrency,
-  bytes: async (name) => {
-    const response = await fetch(asset(name));
-    if (!response.ok) throw new Error(`${name}: HTTP ${response.status}`);
-    return new Uint8Array(await response.arrayBuffer());
+globalThis.__e2e = runAll(
+  {
+    Module,
+    runtime: params.get("runtime") ?? navigator.userAgent,
+    hardwareConcurrency: navigator.hardwareConcurrency,
+    bytes: async (name) => {
+      const response = await fetch(asset(name));
+      if (!response.ok) throw new Error(`${name}: HTTP ${response.status}`);
+      return new Uint8Array(await response.arrayBuffer());
+    },
+    url: asset,
+    importsUrl: new URL("../../tests/custom-imports.js", import.meta.url),
+    workerEntry: new URL("../../src/sandbox/worker-entry.js", import.meta.url),
+    unhandled,
   },
-  url: asset,
-  importsUrl: new URL("../../tests/custom-imports.js", import.meta.url),
-  workerEntry: new URL("../../src/sandbox/worker-entry.js", import.meta.url),
-  unhandled,
-}, {
-  only: only.length ? only : undefined,
-  log: (line) => console.log(`E2E ${line}`),
-});
+  {
+    only: only.length ? only : undefined,
+    log: (line) => console.log(`E2E ${line}`),
+  },
+);

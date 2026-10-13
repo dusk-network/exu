@@ -74,8 +74,8 @@ test("close() also retires workers that were busy at the time", async () => {
 
 test("a task can wait on another task with every worker taken", async () => {
   const module = new Module({ source: ADD_MODULE, workers: 1 });
-  const result = await module.task(async ({ add }) =>
-    await add(1, 2) + await module.api().add(3, 4)
+  const result = await module.task(
+    async ({ add }) => (await add(1, 2)) + (await module.api().add(3, 4)),
   )();
   assert.equal(result, 10);
   module.close();
@@ -149,8 +149,8 @@ test("the workers bound covers tasks with different imports", async () => {
     const results = await Promise.all(
       [undefined, "a", "b"].flatMap((name) =>
         [1, 2, 3].map((i) =>
-          module.api({ imports: name && importsUrl(name) }).add(i, 10)
-        )
+          module.api({ imports: name && importsUrl(name) }).add(i, 10),
+        ),
       ),
     );
     assert.deepEqual(results, [11, 12, 13, 11, 12, 13, 11, 12, 13]);
@@ -189,7 +189,7 @@ test("a worker that fails the handshake is ended, not pooled", async () => {
       assert.rejects(
         module.api().add(1, 2),
         /Incompatible Exu sandbox worker: protocol 99/,
-      )
+      ),
     );
     assert.equal(stats.alive, 0, "an incompatible worker stayed alive");
   } finally {
