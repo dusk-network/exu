@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { test } from "node:test";
+
+import "./leaks.js";
 
 import { Module } from "../src/mod.js";
 import { Sandbox } from "../src/sandbox/mod.js";
+import { threads } from "./workers.js";
 
 const wasmUrl = new URL("./assets/example.wasm", import.meta.url);
 const importsUrl = new URL("./custom-imports.js", import.meta.url);
@@ -16,7 +21,7 @@ const createModule = () => {
   return module;
 };
 
-Deno.test("same-sandbox export calls are serialized", async () => {
+test("same-sandbox export calls are serialized", async () => {
   const result = await createModule().task(({ fibonacci }) =>
     Promise.all([fibonacci(5), fibonacci(7)])
   )({ signal: AbortSignal.timeout(10_000) });
@@ -24,7 +29,7 @@ Deno.test("same-sandbox export calls are serialized", async () => {
   assert.deepEqual(result, [8, 21]);
 });
 
-Deno.test("sandbox initialization errors reject tasks", async () => {
+test("sandbox initialization errors reject tasks", async () => {
   await assert.rejects(
     new Module(wasmUrl).task(() => {
       throw new Error("task unexpectedly ran");
@@ -33,7 +38,7 @@ Deno.test("sandbox initialization errors reject tasks", async () => {
   );
 });
 
-Deno.test("termination rejects active, queued, and future requests", async () => {
+test("termination rejects active, queued, and future requests", async () => {
   let active;
   let future;
   let queued;
@@ -53,35 +58,28 @@ Deno.test("termination rejects active, queued, and future requests", async () =>
   await assert.rejects(() => future(5), /Sandbox terminated/);
 });
 
-Deno.test("worker failures reject active and future requests", async () => {
-  const OriginalWorker = globalThis.Worker;
-  class FailingWorker extends EventTarget {
+test("worker failures reject active and future requests", async () => {
+  const { Worker } = threads;
+  // A thread that fails as soon as it gets a message.
+  threads.Worker = class extends EventEmitter {
     postMessage(_message, transfer = []) {
       transfer.forEach((value) => value.close?.());
-      queueMicrotask(() =>
-        this.dispatchEvent(
-          new ErrorEvent("error", {
-            error: new Error("worker failed"),
-            message: "worker failed",
-          }),
-        )
-      );
+      queueMicrotask(() => this.emit("error", new Error("worker failed")));
     }
-
     terminate() {}
-  }
-
-  Object.defineProperty(globalThis, "Worker", { value: FailingWorker });
+    ref() {}
+    unref() {}
+  };
   try {
     const sandbox = new Sandbox({ module: null, importsUrl: null });
     await assert.rejects(sandbox.globals, /worker failed/);
     await assert.rejects(() => sandbox.exports.ok(), /worker failed/);
   } finally {
-    Object.defineProperty(globalThis, "Worker", { value: OriginalWorker });
+    threads.Worker = Worker;
   }
 });
 
-Deno.test("sandbox remains usable after handled export errors", async () => {
+test("sandbox remains usable after handled export errors", async () => {
   const result = await new Module(TRAP_MODULE).task(
     async ({ missing, ok, trap }) => {
       await assert.rejects(
@@ -99,7 +97,7 @@ Deno.test("sandbox remains usable after handled export errors", async () => {
   assert.equal(result, 42);
 });
 
-Deno.test("sandbox remains usable after handled memory errors", async () => {
+test("sandbox remains usable after handled memory errors", async () => {
   const source = new Uint8Array([1]);
   const result = await createModule().task(
     async ({ fibonacci }, { memcpy }) => {
@@ -115,7 +113,7 @@ Deno.test("sandbox remains usable after handled memory errors", async () => {
   assert.equal(result, 8);
 });
 
-Deno.test("a standalone sandbox accepts calls right away", async () => {
+test("a standalone sandbox accepts calls right away", async () => {
   const module = await WebAssembly.compile(TRAP_MODULE);
   const sandbox = new Sandbox({ module });
   try {
@@ -125,13 +123,13 @@ Deno.test("a standalone sandbox accepts calls right away", async () => {
   }
 });
 
-Deno.test("a standalone sandbox ended at once raises nothing unhandled", async () => {
+test("a standalone sandbox ended at once raises nothing unhandled", async () => {
   const module = await WebAssembly.compile(TRAP_MODULE);
   new Sandbox({ module }).terminate();
   await new Promise((resolve) => setTimeout(resolve, 20));
 });
 
-Deno.test("an instance whose imports never finish starting rejects", async () => {
+test("an instance whose imports never finish starting rejects", async () => {
   const module = await WebAssembly.compile(TRAP_MODULE);
   const importsUrl = new URL("./hanging-imports.js", import.meta.url).href;
   const sandbox = new Sandbox({ module, importsUrl, startTimeout: 100 });

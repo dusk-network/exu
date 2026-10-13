@@ -1,8 +1,12 @@
+import { test } from "node:test";
 import { Module } from "../src/mod.js";
+import { threads } from "./workers.js";
 
-Deno.test("aborted module compilation does not create a sandbox", async () => {
+import "./leaks.js";
+
+test("aborted module compilation does not create a sandbox", async () => {
   const compile = WebAssembly.compile;
-  const Worker = globalThis.Worker;
+  const { Worker } = threads;
   const emptyModule = await compile(
     new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]),
   );
@@ -10,7 +14,7 @@ Deno.test("aborted module compilation does not create a sandbox", async () => {
 
   WebAssembly.compile = () =>
     new Promise((resolve) => (finishCompilation = resolve));
-  globalThis.Worker = class {
+  threads.Worker = class {
     constructor() {
       throw new Error("sandbox created after abort");
     }
@@ -35,11 +39,11 @@ Deno.test("aborted module compilation does not create a sandbox", async () => {
     if (error !== reason) throw error;
   } finally {
     WebAssembly.compile = compile;
-    globalThis.Worker = Worker;
+    threads.Worker = Worker;
   }
 });
 
-Deno.test("invalid modules reject tasks", async () => {
+test("invalid modules reject tasks", async () => {
   const invalid = new Module(new Uint8Array());
   let timer;
   const timeout = new Promise((_, reject) => {

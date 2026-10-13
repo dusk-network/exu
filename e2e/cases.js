@@ -1114,6 +1114,21 @@ export function cases(ctx) {
       },
     },
     {
+      name: "a missing file: source rejects its tasks",
+      async run() {
+        const module = new Module(ctx.url("missing.wasm"));
+        const task = module.task(() => 42)();
+        if (ctx.runtime.startsWith("deno ")) {
+          // Deno's fetch rejects with a TypeError.
+          await assert.rejects(task, { type: TypeError });
+        } else {
+          // Node reads file: sources from disk; Bun's fetch fails as its fs.
+          const error = await task.then(() => null, (e) => e);
+          assert.equal(error?.code, "ENOENT");
+        }
+      },
+    },
+    {
       name: "rejects other sources with a TypeError",
       run() {
         for (const source of [null, 42, {}]) {

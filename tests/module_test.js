@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import "./leaks.js";
 
 import { Module } from "../src/mod.js";
 
 const EMPTY_MODULE = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
 
-Deno.test("module validates sources and default imports", () => {
+test("module validates sources and default imports", () => {
   const module = new Module({ source: EMPTY_MODULE });
   const imports = new URL("./custom-imports.js", import.meta.url);
 
@@ -23,7 +26,7 @@ Deno.test("module validates sources and default imports", () => {
   assert.throws(() => new Module(null), TypeError);
 });
 
-Deno.test("string sources run without imports or shared memory", async () => {
+test("string sources run without imports or shared memory", async () => {
   const module = new Module("data:application/wasm;base64,AGFzbQEAAAA=");
 
   const result = await module.task((_exports, { memory, globals }) => {
@@ -35,7 +38,7 @@ Deno.test("string sources run without imports or shared memory", async () => {
   assert.equal(result, 42);
 });
 
-Deno.test("pre-aborted tasks preserve their abort reason", async () => {
+test("pre-aborted tasks preserve their abort reason", async () => {
   const reason = new Error("stop");
   const task = new Module(EMPTY_MODULE).task(() => {
     throw new Error("task unexpectedly ran");
@@ -47,7 +50,7 @@ Deno.test("pre-aborted tasks preserve their abort reason", async () => {
   );
 });
 
-Deno.test("ArrayBuffers from another realm are accepted", async () => {
+test("ArrayBuffers from another realm are accepted", async () => {
   const { runInNewContext } = await import("node:vm");
   const buffer = runInNewContext(
     "new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]).buffer",
@@ -55,10 +58,4 @@ Deno.test("ArrayBuffers from another realm are accepted", async () => {
   assert.ok(!(buffer instanceof ArrayBuffer));
   const result = await new Module(buffer).task(() => 42)();
   assert.equal(result, 42);
-});
-
-Deno.test("a missing file: source rejects with fetch's TypeError", async () => {
-  // Deno and Bun fetch file: URLs; only Node reads them from disk.
-  const module = new Module(new URL("./assets/missing.wasm", import.meta.url));
-  await assert.rejects(module.task(() => 42)(), TypeError);
 });
