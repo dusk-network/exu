@@ -3,35 +3,36 @@ name: Publish
 on:
   push:
     tags: ["v*"]
+  # To publish an existing tag, run this on it ("Use workflow from" the tag),
+  # so that provenance names the tagged commit.
   workflow_dispatch:
-    inputs:
-      tag:
-        description: The release tag to publish, such as v0.4.0
-        required: true
 
 jobs:
   publish:
-    runs-on: core
+    # npm's trusted publishing and provenance work only on GitHub-hosted
+    # runners.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # JSR and npm authenticate this repository through OIDC
-    env:
-      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
+      - name: Run only on a release tag
+        if: github.ref_type != 'tag'
+        run: |
+          echo "Run this on a release tag, not ${GITHUB_REF}"
+          exit 1
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TAG }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - name: Check the tag matches package.json and jsr.json
-        run: node scripts/check-versions.js "$TAG"
+        run: node scripts/check-versions.js "$GITHUB_REF_NAME"
       # Each registry is skipped when it already has the version, so a failed
       # run can be run again.
       - name: Publish @dusk/exu to JSR
         run: |
-          version="${TAG#v}"
+          version="${GITHUB_REF_NAME#v}"
           if curl -sfo /dev/null "https://jsr.io/@dusk/exu/${version}_meta.json"; then
             echo "JSR already has @dusk/exu@${version}"
           else
@@ -42,7 +43,7 @@ jobs:
           # Only for a first publish, before npm trusts this workflow.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          version="${TAG#v}"
+          version="${GITHUB_REF_NAME#v}"
           if npm view "@dusk-network/exu@${version}" version >/dev/null 2>&1; then
             echo "npm already has @dusk-network/exu@${version}"
           else
