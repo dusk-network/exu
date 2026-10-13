@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Run on Node 22.3 or later, with sandbox workers on `node:worker_threads`
   threads. [#28]
 - Read `file:` URL sources from disk where `node:fs` is available. [#28]
+- Publish to npm as `@dusk-network/exu`. [#30]
 
 ## [0.3.0] - 2026-10-12
 
@@ -98,6 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#17]: https://github.com/dusk-network/exu/issues/17
 [#18]: https://github.com/dusk-network/exu/issues/18
 [#28]: https://github.com/dusk-network/exu/issues/28
+[#30]: https://github.com/dusk-network/exu/issues/30
 [#8]: https://github.com/dusk-network/exu/issues/8
 
 <!-- VERSIONS -->

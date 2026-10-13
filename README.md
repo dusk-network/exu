@@ -12,14 +12,21 @@ Exu is a high-performance library for browsers, Deno, Bun and Node, facilitating
 
 ### Installation
 
-To include Exu in your project, import the module directly from the provided URL:
+From npm, as `@dusk-network/exu`:
+
+```sh
+npm install @dusk-network/exu
+```
+
+```javascript
+import { Module } from "@dusk-network/exu";
+```
+
+From JSR, as `@dusk/exu`:
 
 ```javascript
 import { Module } from "jsr:@dusk/exu";
 ```
-
-On Node, add it with `npx jsr add @dusk/exu` and import it from
-`@dusk/exu`.
 
 ### Basic Usage
 
@@ -165,6 +172,18 @@ Node (22.3 or later) has no Web Workers, so Exu runs each sandbox worker on a
 `file:` URL source is read from disk. A `workerUrl` is imported into the
 thread (a relative one is resolved against the working directory), and so are
 imports, so they must be modules Node can import, such as `file:` URLs.
+
+## Development
+
+```sh
+npm ci
+npm test            # unit tests (node:test)
+npm run check       # Biome, the type declarations, package versions
+node e2e/node.js    # the E2E suite; see e2e/README.md for the other runtimes
+```
+
+Pushing a `v*` tag publishes that version to npm and JSR; `package.json` and
+`jsr.json` must both carry it.
 
 ## License
 

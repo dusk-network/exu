@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: The release tag to publish, such as v0.3.0
+        description: The release tag to publish, such as v0.4.0
         required: true
 
 jobs:
@@ -14,18 +14,37 @@ jobs:
     runs-on: core
     permissions:
       contents: read
-      id-token: write # JSR authenticates the linked repository through OIDC
+      id-token: write # JSR and npm authenticate this repository through OIDC
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.TAG }}
-      - uses: denoland/setup-deno@v2
+      - uses: actions/setup-node@v4
         with:
-          deno-version: v2.x
-      - name: Check the tag matches deno.json
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Check the tag matches package.json and jsr.json
+        run: node scripts/check-versions.js "$TAG"
+      # Each registry is skipped when it already has the version, so a failed
+      # run can be run again.
+      - name: Publish @dusk/exu to JSR
         run: |
-          version=$(deno eval 'console.log(JSON.parse(Deno.readTextFileSync("deno.json")).version)')
-          test "v$version" = "$TAG" || { echo "deno.json has $version, tag is $TAG"; exit 1; }
-      - run: deno publish
+          version="${TAG#v}"
+          if curl -sfo /dev/null "https://jsr.io/@dusk/exu/${version}_meta.json"; then
+            echo "JSR already has @dusk/exu@${version}"
+          else
+            npx --yes jsr@0.14.3 publish
+          fi
+      - name: Publish @dusk-network/exu to npm
+        env:
+          # Only for a first publish, before npm trusts this workflow.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version="${TAG#v}"
+          if npm view "@dusk-network/exu@${version}" version >/dev/null 2>&1; then
+            echo "npm already has @dusk-network/exu@${version}"
+          else
+            npm publish --provenance --access public
+          fi
