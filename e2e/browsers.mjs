@@ -75,9 +75,8 @@ for (const engine of engines) {
         console.log(`${engine.padEnd(8)} ${msg.text().slice(4)}`);
       }
     });
-    page.on(
-      "pageerror",
-      (e) => console.log(`${engine} pageerror: ${e.message}`),
+    page.on("pageerror", (e) =>
+      console.log(`${engine} pageerror: ${e.message}`),
     );
     const query = new URLSearchParams([
       ["runtime", runtime],
@@ -89,7 +88,7 @@ for (const engine of engines) {
       report.push(result);
       ok &&= result.summary.ok;
       if (
-        await page.evaluate(() => globalThis.crossOriginIsolated) !== isolated
+        (await page.evaluate(() => globalThis.crossOriginIsolated)) !== isolated
       ) {
         console.log(`${runtime}: crossOriginIsolated is not ${isolated}`);
         ok = false;

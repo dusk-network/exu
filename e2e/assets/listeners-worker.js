@@ -5,10 +5,14 @@
 import worker from "../../src/sandbox/worker.js";
 
 let ran = false;
-addEventListener("message", () => {
-  if (ran) throw new TypeError("a once listener ran twice");
-  ran = true;
-}, { once: true });
+addEventListener(
+  "message",
+  () => {
+    if (ran) throw new TypeError("a once listener ran twice");
+    ran = true;
+  },
+  { once: true },
+);
 
 const removed = () => {
   throw new TypeError("a removed listener ran");
@@ -26,7 +30,7 @@ addEventListener("message", function () {
   addEventListener("message", () => {
     if (first) throw new TypeError("a listener added mid-dispatch got it");
   });
-  queueMicrotask(() => first = false);
+  queueMicrotask(() => (first = false));
 });
 // Dispatched at the worker global.
 addEventListener("message", (event) => {

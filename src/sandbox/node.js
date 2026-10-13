@@ -31,8 +31,8 @@ function webWorkerGlobals() {
   // handler, `onmessage` takes its place when first set until cleared.
   const listeners = [];
   const remove = (callback, capture) => {
-    const index = listeners.findIndex((entry) =>
-      entry.callback === callback && entry.capture === capture
+    const index = listeners.findIndex(
+      (entry) => entry.callback === callback && entry.capture === capture,
     );
     if (index !== -1) listeners.splice(index, 1)[0].removed = true;
   };
@@ -97,8 +97,8 @@ function webWorkerGlobals() {
       srcElement: globalThis,
       currentTarget: globalThis,
       eventPhase: Event.AT_TARGET,
-      composedPath: () => stopped === null ? [] : [globalThis],
-      stopImmediatePropagation: () => stopped = true,
+      composedPath: () => (stopped === null ? [] : [globalThis]),
+      stopImmediatePropagation: () => (stopped = true),
     });
     for (const entry of [...listeners]) {
       if (stopped) break;
@@ -179,9 +179,9 @@ export function startNodeWorker(workerUrl, wanted = () => true) {
 const threadSource = (href) =>
   href === undefined
     ? `const start = (${webWorkerGlobals})();\n(${worker})();\nstart();`
-    : `const start = (${webWorkerGlobals})();\nimport(${
-      JSON.stringify(href)
-    }).then(start).catch((error) => process.nextTick(() => { throw error; }));`;
+    : `const start = (${webWorkerGlobals})();\nimport(${JSON.stringify(
+        href,
+      )}).then(start).catch((error) => process.nextTick(() => { throw error; }));`;
 
 /**
  * A sandbox worker on a `node:worker_threads` thread that behaves like a Web
@@ -222,23 +222,23 @@ export class NodeWorker extends EventTarget {
   constructor(workerUrl) {
     super();
     const { pathToFileURL } = globalThis.process.getBuiltinModule("node:url");
-    const href = workerUrl === undefined
-      ? undefined
-      : new URL(workerUrl, pathToFileURL(`${globalThis.process.cwd()}/`)).href;
+    const href =
+      workerUrl === undefined
+        ? undefined
+        : new URL(workerUrl, pathToFileURL(`${globalThis.process.cwd()}/`))
+            .href;
     // Looked up on each start, so tests can count threads.
     const { Worker } = globalThis.process.getBuiltinModule(
       "node:worker_threads",
     );
     this.#thread = new Worker(threadSource(href), { eval: true });
 
-    this.#thread.on(
-      "message",
-      (data) => this.dispatchEvent(new MessageEvent("message", { data })),
+    this.#thread.on("message", (data) =>
+      this.dispatchEvent(new MessageEvent("message", { data })),
     );
     this.#thread.on("error", (error) => this.#fail("error", error));
-    this.#thread.on(
-      "messageerror",
-      (error) => this.#fail("messageerror", error),
+    this.#thread.on("messageerror", (error) =>
+      this.#fail("messageerror", error),
     );
     this.#thread.on("exit", (code) => {
       if (!this.#ended) {

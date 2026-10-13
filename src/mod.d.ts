@@ -12,11 +12,7 @@ export interface MemoryAccessor {
   memory: WebAssembly.Memory;
   /** Copies bytes between JavaScript and WebAssembly memory. */
   memcpy(dest: null, source: number, count: number): Promise<Uint8Array>;
-  memcpy(
-    dest: number,
-    source: Uint8Array,
-    count?: number,
-  ): Promise<Uint8Array>;
+  memcpy(dest: number, source: Uint8Array, count?: number): Promise<Uint8Array>;
   memcpy(dest: number, source: number, count: number): Promise<void>;
   memcpy(dest: Uint8Array, source: Uint8Array): Promise<void>;
   /** The WebAssembly globals exported by the running module. */
@@ -66,9 +62,9 @@ export interface SandboxOptions {
  * Callable proxy over the WebAssembly module exports. It has no `then`, so
  * awaiting it gives the proxy itself.
  */
-export type ModuleApi =
-  & { [name: string]: (...args: unknown[]) => Promise<unknown> }
-  & { then?: never };
+export type ModuleApi = {
+  [name: string]: (...args: unknown[]) => Promise<unknown>;
+} & { then?: never };
 
 /**
  * WebAssembly module wrapper that runs each task in an isolated worker sandbox.

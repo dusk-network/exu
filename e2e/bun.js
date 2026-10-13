@@ -15,16 +15,19 @@ process.on("unhandledRejection", (reason) => unhandled.push(reason));
 
 const asset = (name) => new URL(`./assets/${name}`, import.meta.url);
 const only = process.argv.slice(2);
-const { summary, results } = await runAll({
-  Module,
-  runtime: `bun ${Bun.version}`,
-  hardwareConcurrency: navigator.hardwareConcurrency,
-  bytes: async (name) => new Uint8Array(await readFile(asset(name))),
-  url: asset,
-  importsUrl: new URL("../tests/custom-imports.js", import.meta.url),
-  workerEntry: new URL("../src/sandbox/worker-entry.js", import.meta.url),
-  unhandled,
-}, { only: only.length ? only : undefined });
+const { summary, results } = await runAll(
+  {
+    Module,
+    runtime: `bun ${Bun.version}`,
+    hardwareConcurrency: navigator.hardwareConcurrency,
+    bytes: async (name) => new Uint8Array(await readFile(asset(name))),
+    url: asset,
+    importsUrl: new URL("../tests/custom-imports.js", import.meta.url),
+    workerEntry: new URL("../src/sandbox/worker-entry.js", import.meta.url),
+    unhandled,
+  },
+  { only: only.length ? only : undefined },
+);
 
 if (process.env.E2E_JSON) {
   await writeFile(process.env.E2E_JSON, JSON.stringify({ summary, results }));

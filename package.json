@@ -1,0 +1,37 @@
+{
+  "name": "@dusk-network/exu",
+  "version": "0.3.0",
+  "description": "Run WebAssembly modules as isolated, abortable tasks in workers",
+  "license": "MPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dusk-network/exu.git"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/mod.d.ts",
+      "default": "./src/mod.js"
+    }
+  },
+  "types": "./src/mod.d.ts",
+  "files": [
+    "src",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22.3"
+  },
+  "scripts": {
+    "test": "node --test \"tests/*_test.js\"",
+    "coverage": "node --test --experimental-test-coverage --test-coverage-include=\"src/**\" \"tests/*_test.js\"",
+    "check": "biome ci && npm run typecheck && node scripts/check-versions.js",
+    "typecheck": "tsc --noEmit --strict --target es2022 --lib es2022,dom src/mod.d.ts",
+    "format": "biome check --write",
+    "e2e": "node e2e/node.js"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "typescript": "7.0.2"
+  }
+}

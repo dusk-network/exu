@@ -55,10 +55,14 @@ export function probeWorker(create, timeout = PROBE_TIMEOUT) {
       resolve(usable);
     };
     const timer = setTimeout(() => done(false), timeout);
-    probe.addEventListener("error", (event) => {
-      event.preventDefault();
-      done(false);
-    }, { once: true });
+    probe.addEventListener(
+      "error",
+      (event) => {
+        event.preventDefault();
+        done(false);
+      },
+      { once: true },
+    );
     // Any reply, even the error for this unknown message, proves it started.
     probe.addEventListener("message", () => done(true), { once: true });
     probe.postMessage({ type: "probe" });
@@ -73,7 +77,8 @@ const PROBE_RETRY = 60_000;
  * failure (perhaps a transient one) is rechecked after `PROBE_RETRY`.
  */
 function probeFileWorker() {
-  const stale = fileWorkerProbe?.failedAt !== undefined &&
+  const stale =
+    fileWorkerProbe?.failedAt !== undefined &&
     performance.now() - fileWorkerProbe.failedAt > PROBE_RETRY;
   if (!fileWorkerProbe || stale) {
     const probe = { usable: probeWorker(fileWorker) };
@@ -108,7 +113,7 @@ export async function spawnWorker(workerUrl, wanted) {
   if (workerUrl !== undefined) {
     return new Worker(workerUrl, { type: "module" });
   }
-  if (!isServerRuntime() && await probeFileWorker()) {
+  if (!isServerRuntime() && (await probeFileWorker())) {
     return fileWorker();
   }
   return blobWorker();

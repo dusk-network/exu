@@ -1,0 +1,8 @@
+{
+  "name": "@dusk/exu",
+  "version": "0.3.0",
+  "exports": "./src/mod.js",
+  "publish": {
+    "include": ["LICENSE", "README.md", "src"]
+  }
+}

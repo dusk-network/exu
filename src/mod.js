@@ -71,9 +71,9 @@ const untilAborted = (promise, signal) => {
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
     // Handled first, so the work's own late failure is never unhandled.
-    promise.then(resolve, reject).finally(() =>
-      signal.removeEventListener("abort", abort)
-    );
+    promise
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", abort));
     if (signal.aborted) return abort();
     signal.addEventListener("abort", abort, { once: true });
   });
@@ -129,7 +129,8 @@ const hrefOf = (value) => {
  */
 const compileUrl = (href) => {
   if (href.startsWith("file:") && isNode()) {
-    return globalThis.process.getBuiltinModule("node:fs/promises")
+    return globalThis.process
+      .getBuiltinModule("node:fs/promises")
       .readFile(new URL(href))
       .then((bytes) => WebAssembly.compile(bytes));
   }
@@ -253,7 +254,7 @@ export class Module {
     signal?.throwIfAborted();
 
     const importsUrl = ensureImportsValue(imports) ?? this.#importsUrl;
-    const pool = this.#pool ??= new Pool({
+    this.#pool ??= new Pool({
       create: (importsUrl) =>
         new WorkerChannel({
           module,
@@ -264,6 +265,7 @@ export class Module {
       size: this.#workers,
       reuse: this.#idleTimeout > 0,
     });
+    const pool = this.#pool;
     const channel = await pool.acquire(signal, importsUrl);
     const sandbox = new Sandbox({ channel, signal });
 

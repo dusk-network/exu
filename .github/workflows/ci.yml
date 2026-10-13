@@ -10,18 +10,19 @@ jobs:
     runs-on: core
     steps:
       - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-      - run: deno fmt --check src tests deno.json
-      - run: deno lint
-      - run: deno check src/mod.js
-      - run: deno task coverage
-      - run: deno run --allow-read --allow-net e2e/deno.js
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run coverage
       - run: node e2e/node.js
       # Threads inherit Node's unhandled-rejection policy; a worker module that
       # fails must fail its task under each.
       - run: node --unhandled-rejections=warn e2e/node.js "fails to load" "held message"
+      # Deno stays a supported runtime while consumers run on it.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno run --allow-read --allow-net e2e/deno.js

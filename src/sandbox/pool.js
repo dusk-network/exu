@@ -166,8 +166,9 @@ export class Pool {
   #relieve() {
     if (this.#waiters.length === 0) return;
     const now = performance.now();
-    const stalled = [...this.#busy].every((channel) =>
-      channel.idleSince !== undefined && now - channel.idleSince >= STALL
+    const stalled = [...this.#busy].every(
+      (channel) =>
+        channel.idleSince !== undefined && now - channel.idleSince >= STALL,
     );
     if (stalled) this.#startForNext();
     this.#watch();
@@ -184,7 +185,9 @@ export class Pool {
     this.#busy.delete(channel);
     const waiter = this.#waiters[0];
     if (
-      !reusable || channel.dead || this.#retiring.has(channel) ||
+      !reusable ||
+      channel.dead ||
+      this.#retiring.has(channel) ||
       (waiter && waiter.importsUrl !== this.#imports.get(channel))
     ) {
       channel.kill();

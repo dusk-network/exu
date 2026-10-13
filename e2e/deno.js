@@ -15,26 +15,30 @@ globalThis.addEventListener("unhandledrejection", (event) => {
 });
 
 const asset = (name) => new URL(`./assets/${name}`, import.meta.url);
-const { summary, results } = await runAll({
-  Module,
-  runtime: `deno ${Deno.version.deno}`,
-  hardwareConcurrency: navigator.hardwareConcurrency,
-  bytes: (name) => Deno.readFile(asset(name)),
-  url: asset,
-  importsUrl: new URL("../tests/custom-imports.js", import.meta.url),
-  workerEntry: new URL("../src/sandbox/worker-entry.js", import.meta.url),
-  unhandled,
-}, { only: Deno.args.length ? Deno.args : undefined });
+const { summary, results } = await runAll(
+  {
+    Module,
+    runtime: `deno ${Deno.version.deno}`,
+    hardwareConcurrency: navigator.hardwareConcurrency,
+    bytes: (name) => Deno.readFile(asset(name)),
+    url: asset,
+    importsUrl: new URL("../tests/custom-imports.js", import.meta.url),
+    workerEntry: new URL("../src/sandbox/worker-entry.js", import.meta.url),
+    unhandled,
+  },
+  { only: Deno.args.length ? Deno.args : undefined },
+);
 
 // Only with --allow-env=E2E_JSON: never prompt for permission.
-const json = Deno.permissions.querySync({ name: "env", variable: "E2E_JSON" })
-    .state === "granted"
-  ? Deno.env.get("E2E_JSON")
-  : undefined;
+const json =
+  Deno.permissions.querySync({ name: "env", variable: "E2E_JSON" }).state ===
+  "granted"
+    ? Deno.env.get("E2E_JSON")
+    : undefined;
 if (json) {
   if (
     Deno.permissions.querySync({ name: "write", path: json }).state !==
-      "granted"
+    "granted"
   ) {
     console.error(`E2E_JSON needs --allow-write=${json}`);
     Deno.exit(1);
