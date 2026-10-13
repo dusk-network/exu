@@ -1,6 +1,7 @@
-// Adds a `once` listener, a listener that removes a later one, and one that
-// adds another, then runs Exu's worker: message listeners must follow the
-// DOM's rules, as in a Web Worker.
+// Adds a `once` listener, a listener that removes a later one, one that adds
+// another, one that checks the target, and one that stops the rest, around
+// Exu's worker: message listeners must follow the DOM's rules, as in a Web
+// Worker.
 import worker from "../../src/sandbox/worker.js";
 
 let ran = false;
@@ -27,4 +28,23 @@ addEventListener("message", function () {
   });
   queueMicrotask(() => first = false);
 });
+// Dispatched at the worker global.
+addEventListener("message", (event) => {
+  if (event.target !== self || event.currentTarget !== self) {
+    throw new TypeError("a message's target is not self");
+  }
+});
+
 worker();
+
+// After Exu's worker, on a task's `begin` (which it answers asynchronously, so
+// a throw here would fail the task): stopping must keep the next listener out,
+// and the one added mid-dispatch, appended later still.
+addEventListener("message", (event) => {
+  if (event.data?.type === "begin") event.stopImmediatePropagation();
+});
+addEventListener("message", (event) => {
+  if (event.data?.type === "begin") {
+    throw new TypeError("stopImmediatePropagation did not stop a listener");
+  }
+});

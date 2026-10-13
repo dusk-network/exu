@@ -76,9 +76,32 @@ function webWorkerGlobals() {
   globalThis.postMessage = (data, transfer) =>
     parentPort.postMessage(data, transfer);
 
+  // The event as dispatched at the worker global: trusted, at its target,
+  // and honouring stopImmediatePropagation.
   const deliver = ({ data, ports }) => {
     const event = new MessageEvent("message", { data, ports });
+    let stopped = false;
+    const set = (values) =>
+      Object.defineProperties(
+        event,
+        Object.fromEntries(
+          Object.entries(values).map(([key, value]) => [
+            key,
+            { value, configurable: true },
+          ]),
+        ),
+      );
+    set({
+      isTrusted: true,
+      target: globalThis,
+      srcElement: globalThis,
+      currentTarget: globalThis,
+      eventPhase: Event.AT_TARGET,
+      composedPath: () => stopped === null ? [] : [globalThis],
+      stopImmediatePropagation: () => stopped = true,
+    });
     for (const entry of [...listeners]) {
+      if (stopped) break;
       if (entry.removed) continue;
       if (entry.once) remove(entry.callback, entry.capture);
       try {
@@ -93,6 +116,8 @@ function webWorkerGlobals() {
         });
       }
     }
+    stopped = null;
+    set({ currentTarget: null, eventPhase: Event.NONE });
   };
   let queued = [];
   parentPort.on("message", ({ data, ports }) => {
